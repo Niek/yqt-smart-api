@@ -21,6 +21,7 @@ async def async_setup_entry(
 
 class YQTTrackerEntity(YQTEntity, TrackerEntity):
     _attr_translation_key = "location"
+    _attr_entity_category = None
 
     def __init__(self, coordinator, did: str) -> None:
         super().__init__(coordinator, did)
@@ -35,8 +36,8 @@ class YQTTrackerEntity(YQTEntity, TrackerEntity):
         return self.snapshot.longitude
 
     @property
-    def location_accuracy(self) -> int | None:
-        return self.snapshot.accuracy
+    def location_accuracy(self) -> int:
+        return self.snapshot.accuracy or 0
 
     @property
     def source_type(self) -> SourceType:

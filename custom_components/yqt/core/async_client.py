@@ -27,6 +27,7 @@ from .protocol import (
     coerce_int,
     compute_sign,
     hash_password,
+    is_login_timeout_response,
 )
 
 
@@ -66,9 +67,13 @@ class YQTApiClient:
     ) -> dict[str, YQTWatchState]:
         login_payload = await self.async_login()
         watches = build_watch_index(login_payload, self.user_id)
-        if not watches and self.user_id is not None:
+        if self.user_id is not None:
             device_payload = await self.async_find_device_list_by_user_id()
-            watches = build_watch_index(device_payload, self.user_id)
+            device_watches = build_watch_index(device_payload, self.user_id)
+            if not watches:
+                watches = device_watches
+            elif device_watches:
+                watches = self._merge_watches(watches, device_watches)
 
         if not watches:
             raise YQTResponseError(None, "login succeeded but no watches were discovered", login_payload)
@@ -77,37 +82,35 @@ class YQTApiClient:
         previous = previous or {}
         states: dict[str, YQTWatchState] = {}
         for did, watch in watches.items():
-            response = await self.async_find_last_position(watch)
-            states[did] = build_watch_state(watch, response, previous.get(did))
+            try:
+                response = await self.async_find_last_position(watch)
+            except YQTAuthError:
+                raise
+            except YQTResponseError as exc:
+                states[did] = build_watch_state(watch, exc.payload, previous.get(did))
+            except YQTError as exc:
+                states[did] = build_watch_state(
+                    watch,
+                    {"status": -1, "message": str(exc), "data": []},
+                    previous.get(did),
+                )
+            else:
+                states[did] = build_watch_state(watch, response, previous.get(did))
         return states
 
     async def async_request_location(self, did: str) -> dict[str, Any]:
-        if did not in self._watches or not self.session_id:
-            await self.async_login()
-
-        watch = self._watches.get(did)
-        if watch is None:
-            raise YQTError(f"unknown watch {did}")
-        if not watch.model:
-            raise YQTError(f"device model is required for {did}")
-
-        payload = self._signed_params(
-            {
-                "sid": self.session_id,
-                "language": self.language,
-                "sendurl": f"test?dev_id={watch.did}&com=D3&dev_model={watch.model}",
-            }
+        watch = await self._async_ensure_watch(did)
+        response = await self._async_send_order(
+            f"test?dev_id={watch.did}&com=D3&dev_model={watch.model}",
         )
-        response = await self._request_json("POST", self._session_path("/S10APP/v2_sendOrder"), data=payload)
-
-        code = coerce_int(response.get("code"))
-        if code == 200:
-            return response
-        if coerce_int(response.get("status")) in SUCCESS_STATUSES:
-            return response
-
-        message = str(response.get("message", response.get("msg", "unexpected command response")))
-        raise YQTResponseError(code, message, response)
+        if is_login_timeout_response(response):
+            await self._async_reauthenticate()
+            watch = await self._async_ensure_watch(did)
+            response = await self._async_send_order(
+                f"test?dev_id={watch.did}&com=D3&dev_model={watch.model}",
+            )
+        self._ensure_command_success(response)
+        return response
 
     async def async_login(self) -> dict[str, Any]:
         payload = self._signed_params(
@@ -157,17 +160,84 @@ class YQTApiClient:
         if not watch.did_id:
             raise YQTError(f"did_id is required for watch {watch.did}")
 
+        response = await self._async_find_last_position_once(watch)
+        if is_login_timeout_response(response):
+            await self._async_reauthenticate()
+            refreshed = self._watches.get(watch.did, watch)
+            response = await self._async_find_last_position_once(refreshed)
+        self._ensure_status(response, SUCCESS_STATUSES | {2})
+        response.setdefault("data", [])
+        return response
+
+    async def _async_ensure_watch(self, did: str) -> YQTWatch:
+        if did not in self._watches or not self.session_id:
+            await self.async_login()
+        if did not in self._watches and self.user_id is not None:
+            device_payload = await self.async_find_device_list_by_user_id()
+            self._watches = self._merge_watches(self._watches, build_watch_index(device_payload, self.user_id))
+
+        watch = self._watches.get(did)
+        if watch is None:
+            raise YQTError(f"unknown watch {did}")
+        if not watch.model:
+            raise YQTError(f"device model is required for {did}")
+        return watch
+
+    async def _async_reauthenticate(self) -> None:
+        await self.async_login()
+        if self.user_id is None:
+            return
+        device_payload = await self.async_find_device_list_by_user_id()
+        self._watches = self._merge_watches(self._watches, build_watch_index(device_payload, self.user_id))
+
+    async def _async_send_order(self, sendurl: str) -> dict[str, Any]:
+        payload = self._signed_params(
+            {
+                "sid": self.session_id,
+                "language": self.language,
+                "sendurl": sendurl,
+            }
+        )
+        return await self._request_json("POST", self._session_path("/S10APP/v2_sendOrder"), data=payload)
+
+    async def _async_find_last_position_once(self, watch: YQTWatch) -> dict[str, Any]:
         payload = self._signed_params(
             {
                 "language": self.language,
                 "did_id": watch.did_id,
                 "did": watch.did,
+                "id": "",
             }
         )
-        response = await self._request_json("GET", self._session_path("/S10APP/v2_findLastPosition"), params=payload)
-        self._ensure_status(response, SUCCESS_STATUSES | {2})
-        response.setdefault("data", [])
-        return response
+        return await self._request_json(
+            "GET",
+            self._session_path("/S10APP/v2_findLastPosition"),
+            params=payload,
+        )
+
+    @staticmethod
+    def _merge_watches(
+        primary: dict[str, YQTWatch],
+        secondary: dict[str, YQTWatch],
+    ) -> dict[str, YQTWatch]:
+        merged = dict(primary)
+        for did, extra in secondary.items():
+            current = merged.get(did)
+            if current is None:
+                merged[did] = extra
+                continue
+            merged[did] = YQTWatch(
+                did=current.did,
+                did_id=current.did_id or extra.did_id,
+                model=current.model or extra.model,
+                nickname=current.nickname or extra.nickname,
+                rolename=current.rolename or extra.rolename,
+                user_id=current.user_id if current.user_id is not None else extra.user_id,
+                config=current.config or extra.config,
+                is_esim=current.is_esim or extra.is_esim,
+                watch_type=current.watch_type or extra.watch_type,
+            )
+        return merged
 
     def _session_path(self, suffix: str) -> str:
         if not self.session_id:
@@ -232,6 +302,18 @@ class YQTApiClient:
         if status not in allowed_statuses:
             message = str(payload.get("message", "unknown server response"))
             raise YQTResponseError(status, message, payload)
+
+    @staticmethod
+    def _ensure_command_success(payload: dict[str, Any]) -> None:
+        code = coerce_int(payload.get("code"))
+        if code == 200:
+            return
+        status = coerce_int(payload.get("status"))
+        if status in SUCCESS_STATUSES:
+            return
+
+        message = str(payload.get("message", payload.get("msg", "unexpected command response")))
+        raise YQTResponseError(code if code is not None else status, message, payload)
 
     @staticmethod
     def _ensure_login_success(payload: dict[str, Any]) -> None:

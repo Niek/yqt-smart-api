@@ -9,6 +9,7 @@ from custom_components.yqt.core.protocol import (
     build_watch_index,
     build_watch_state,
     compute_sign,
+    is_login_timeout_response,
 )
 
 
@@ -76,6 +77,11 @@ class ApiHelpersTestCase(unittest.TestCase):
         self.assertEqual(current.battery, previous.battery)
         self.assertEqual(current.last_poll_status, 2)
         self.assertEqual(current.last_poll_message, "query failure")
+
+    def test_is_login_timeout_response_detects_backend_session_expiry(self) -> None:
+        self.assertTrue(is_login_timeout_response({"status": 607, "message": "Login timeout,Please login agian!"}))
+        self.assertTrue(is_login_timeout_response({"message": "Login timeout"}))
+        self.assertFalse(is_login_timeout_response({"status": 1, "message": "OK"}))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@
         "description": "Enter the YQT Smart account details for the watches you want to expose.",
         "data": {
           "region": "Region",
-          "loginname": "Login name",
+          "loginname": "Account",
           "password": "Password"
         }
       },

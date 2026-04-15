@@ -421,7 +421,7 @@ class YQTClient:
             return did, device["did_id"]
 
         raise YQTError(
-            f"did_id is required for device {did}; log in with --loginname/--password first or pass --did-id explicitly"
+            f"did_id is required for device {did}; log in with --account/--password first or pass --did-id explicitly"
         )
 
     def resolve_device_model(self, did: str, model: str = "") -> str:
@@ -438,7 +438,7 @@ class YQTClient:
                     return value
 
         raise YQTError(
-            f"device model is required for {did}; log in with --loginname/--password first or pass --model explicitly"
+            f"device model is required for {did}; log in with --account/--password first or pass --model explicitly"
         )
 
     def resolve_user_id(self, user_id: int | None = None) -> int:
@@ -447,7 +447,7 @@ class YQTClient:
             return user_id
         if isinstance(self.user_id, int):
             return self.user_id
-        raise YQTError("user_id is required; log in with --loginname/--password first or pass --user-id explicitly")
+        raise YQTError("user_id is required; log in with --account/--password first or pass --user-id explicitly")
 
     def resolve_loginname(self, loginname: str | None = None) -> str:
         if loginname:
@@ -455,7 +455,7 @@ class YQTClient:
             return loginname
         if isinstance(self.loginname, str) and self.loginname:
             return self.loginname
-        raise YQTError("loginname is required; log in with --loginname/--password first or pass --loginname explicitly")
+        raise YQTError("account is required; log in with --account/--password first or pass --account explicitly")
 
     def known_dids(self) -> list[str]:
         return list(self._device_index)

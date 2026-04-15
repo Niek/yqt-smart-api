@@ -19,7 +19,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Probe the YQT SMART HTTP API.")
     parser.add_argument("--region", default="europe", choices=sorted(REGIONS))
     parser.add_argument("--language", default=DEFAULT_LANGUAGE)
-    parser.add_argument("--loginname", help="Account login name for commands that need authentication")
+    parser.add_argument(
+        "--account",
+        "--loginname",
+        dest="account",
+        help="Account identifier for commands that need authentication",
+    )
     parser.add_argument("--password", help="Raw account password for commands that need authentication")
     parser.add_argument("--sid", help="Existing session id; skips login for session-bound commands")
 
@@ -91,9 +96,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _require_login_fields(args: argparse.Namespace) -> tuple[str, str]:
-    if not args.loginname or not args.password:
-        raise SystemExit("--loginname and --password are required for this command")
-    return args.loginname, args.password
+    if not args.account or not args.password:
+        raise SystemExit("--account and --password are required for this command")
+    return args.account, args.password
 
 
 def _primary_user_id(login_response: dict[str, object]) -> int:
@@ -138,13 +143,13 @@ def main() -> None:
         print(json.dumps(response, indent=2, sort_keys=True))
         return
 
-    loginname: str | None = client.loginname or args.loginname
+    account: str | None = client.loginname or args.account
 
     if not client.session_id:
-        loginname, password = _require_login_fields(args)
-        client.login(loginname, password)
-    elif args.loginname:
-        loginname = args.loginname
+        account, password = _require_login_fields(args)
+        client.login(account, password)
+    elif args.account:
+        account = args.account
 
     if args.command == "last-position":
         _, did_id = client.resolve_device(args.did, args.did_id)
@@ -192,7 +197,7 @@ def main() -> None:
             did=args.did,
             did_id=did_id,
             user_id=args.user_id,
-            loginname=loginname,
+            loginname=account,
             message=args.message,
         )
     elif args.command == "alarms":

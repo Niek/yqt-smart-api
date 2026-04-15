@@ -60,6 +60,7 @@ class YQTDataUpdateCoordinator(DataUpdateCoordinator[dict[str, YQTWatchState]]):
             self._async_handle_delayed_refresh,
         )
 
-    async def _async_handle_delayed_refresh(self, _now) -> None:
+    @callback
+    def _async_handle_delayed_refresh(self, _now) -> None:
         self._delayed_refresh_unsub = None
-        await self.async_request_refresh()
+        self.hass.async_create_task(self.async_request_refresh())

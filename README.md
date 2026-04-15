@@ -14,15 +14,15 @@ For protocol notes and endpoint findings, see `REVERSE_ENGINEERING.md`.
 The CLI entry point is:
 
 ```bash
-python3 yqt_client.py --region europe --loginname YOUR_EMAIL --password YOUR_PASSWORD login
+python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD login
 ```
 
 Useful smoke tests:
 
 ```bash
-python3 yqt_client.py --region europe --loginname YOUR_EMAIL --password YOUR_PASSWORD devices
-python3 yqt_client.py --region europe --loginname YOUR_EMAIL --password YOUR_PASSWORD last-position --did YOUR_DEVICE_ID
-python3 yqt_client.py --region europe --loginname YOUR_EMAIL --password YOUR_PASSWORD fresh-position --did YOUR_DEVICE_ID
+python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD devices
+python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD last-position --did YOUR_DEVICE_ID
+python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD fresh-position --did YOUR_DEVICE_ID
 ```
 
 If you want to see the available commands:
@@ -45,7 +45,7 @@ To install it in Home Assistant:
 2. Restart Home Assistant.
 3. In Home Assistant, go to `Settings -> Devices & services -> Add integration`.
 4. Search for `YQT Smart`.
-5. Enter your `region`, `loginname`, and `password`.
+5. Enter your `region`, `account`, and `password`.
 
 The current MVP exposes:
 

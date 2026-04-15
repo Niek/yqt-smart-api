@@ -315,6 +315,15 @@ def extract_address(row: dict[str, Any]) -> str | None:
     return None
 
 
+def is_login_timeout_response(payload: dict[str, Any]) -> bool:
+    status = coerce_int(payload.get("status"))
+    if status == 607:
+        return True
+
+    message = str(payload.get("message", "")).lower()
+    return "login timeout" in message
+
+
 def build_watch_state(
     watch: YQTWatch,
     response: dict[str, Any],
