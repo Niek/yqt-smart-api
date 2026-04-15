@@ -9,6 +9,16 @@ It currently contains two practical outputs:
 
 For protocol notes and endpoint findings, see `REVERSE_ENGINEERING.md`.
 
+## Compatible Smart Watches
+
+Confirmed examples:
+
+- FREEBOT `T53` ([Amazon](https://www.amazon.com/FREEBOT-Parental-Controls-Emergency-Birthday/dp/B0DRBPY8QC?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
+- PTHTECHUS `PTH-G4-S02` ([Amazon](https://www.amazon.com/dp/B09198QYX8?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
+- PTHTECHUS `PTH-G4-S07` ([Amazon](https://www.amazon.com/dp/B0B12MC8FP?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
+- Tixpc `G31` ([Amazon](https://www.amazon.com/dp/B0DJVSDGT5?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
+- tykjszgs `LT31` ([Amazon](https://www.amazon.com/dp/B0CZ6G69WY?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
+
 ## Standalone Client
 
 The CLI entry point is:
