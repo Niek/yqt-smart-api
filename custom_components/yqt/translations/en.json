@@ -1,0 +1,57 @@
+{
+  "title": "YQT Smart",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect YQT Smart",
+        "description": "Enter the YQT Smart account details for the watches you want to expose.",
+        "data": {
+          "region": "Region",
+          "loginname": "Login name",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect YQT Smart",
+        "description": "Update the password for this YQT Smart account.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication",
+      "cannot_connect": "Failed to connect"
+    },
+    "abort": {
+      "already_configured": "This YQT Smart account is already configured.",
+      "reauth_successful": "Reauthentication successful",
+      "reauth_unsuccessful": "Reauthentication could not be started"
+    }
+  },
+  "entity": {
+    "device_tracker": {
+      "location": {
+        "name": "Location"
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      },
+      "last_fix": {
+        "name": "Last fix"
+      }
+    },
+    "binary_sensor": {
+      "location_stale": {
+        "name": "Location stale"
+      }
+    },
+    "button": {
+      "request_location": {
+        "name": "Request location"
+      }
+    }
+  }
+}
