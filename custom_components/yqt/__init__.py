@@ -16,11 +16,6 @@ PLATFORMS = (
 )
 
 
-async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
-    hass.data.setdefault(DOMAIN, {})
-    return True
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     import aiohttp
 
