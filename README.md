@@ -49,6 +49,16 @@ The Home Assistant integration lives in:
 custom_components/yqt
 ```
 
+### HACS
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api)
+
+1. In HACS, add this repository as a custom repository with category `Integration`.
+2. Install `YQT Smart`.
+3. Restart Home Assistant.
+
+### Manual
+
 To install it in Home Assistant:
 
 1. Copy `custom_components/yqt` into your HA config directory under `custom_components/yqt`.

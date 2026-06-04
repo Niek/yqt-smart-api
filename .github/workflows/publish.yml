@@ -1,0 +1,102 @@
+name: Validate and Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MANIFEST: custom_components/yqt/manifest.json
+
+jobs:
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  hassfest:
+    name: Hassfest validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: home-assistant/actions/hassfest@master
+
+  release:
+    name: Release
+    needs: [hacs, hassfest]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          semver_tags() {
+            git tag "$@" --list "v*" \
+              | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" \
+              | sort -V
+          }
+
+          tag="$(semver_tags --points-at "$GITHUB_SHA" | tail -n 1 || true)"
+          create=false
+
+          if [ -z "$tag" ]; then
+            tag="$(semver_tags | tail -n 1 || true)"
+            if [ -z "$tag" ]; then
+              tag="v0.1.0"
+            else
+              IFS=. read -r major minor patch <<< "${tag#v}"
+              tag="v${major}.${minor}.$((patch + 1))"
+            fi
+            create=true
+          fi
+
+          printf 'tag=%s\ncreate=%s\n' "$tag" "$create" >> "$GITHUB_OUTPUT"
+
+      - name: Update manifest version
+        if: steps.version.outputs.create == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${{ steps.version.outputs.tag }}"
+          version="${version#v}"
+
+          tmp_file="$(mktemp)"
+          jq --arg version "$version" '.version = $version' "$MANIFEST" > "$tmp_file"
+          mv "$tmp_file" "$MANIFEST"
+
+      - name: Commit manifest version
+        id: manifest_commit
+        if: steps.version.outputs.create == 'true'
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "chore: bump manifest version to ${{ steps.version.outputs.tag }}"
+          file_pattern: ${{ env.MANIFEST }}
+
+      - name: Create GitHub release
+        if: steps.version.outputs.create == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ steps.manifest_commit.outputs.commit_hash || github.sha }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
