@@ -18,6 +18,7 @@ Confirmed examples:
 - PTHTECHUS `PTH-G4-S07` ([Amazon](https://www.amazon.com/dp/B0B12MC8FP?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
 - Tixpc `G31` ([Amazon](https://www.amazon.com/dp/B0DJVSDGT5?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
 - tykjszgs `LT31` ([Amazon](https://www.amazon.com/dp/B0CZ6G69WY?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
+- Wonlex `KT31` ([Wonlex](https://www.iwonlex.net/products/wonlex-4g-amoled-screen-gps-android-8-1-kids-videocall-smartwatch-kt31/))
 - `GTQ68NO` ([montre-enfant.com](https://www.montre-enfant.com/produit/traceur-gps-enfant-4g-avec-bouton-d-appel-sos-modele-gtq68no))
 
 ## Standalone Client

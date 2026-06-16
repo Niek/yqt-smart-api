@@ -3,6 +3,9 @@ name: Validate and Release
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "**/*.md"
   workflow_dispatch:
 
 permissions:
