@@ -12,6 +12,8 @@ from custom_components.yqt.core.protocol import (
     is_login_timeout_response,
 )
 
+# Test fixtures use mocked/censored data only. Do not add real account, device, or location data.
+
 
 class ApiHelpersTestCase(unittest.TestCase):
     def test_compute_sign_matches_known_value(self) -> None:
@@ -33,35 +35,35 @@ class ApiHelpersTestCase(unittest.TestCase):
 
     def test_build_watch_index_from_login_metadata(self) -> None:
         payload = {
-            "didstr": "0907537528-Eva,3004210780-Cas,",
-            "didrole": "0907537528-Dad,3004210780-Dad,",
-            "didtype": "0907537528-1,3004210780-1,",
-            "isEsim": "0907537528-0,3004210780-0,",
-            "total_did_id": "0907537528-134873174,3004210780-63145330,",
-            "total_did_model": "0907537528-g36f,3004210780-g36d,",
-            "total_did_config": "0907537528-CFG1,3004210780-CFG2,",
+            "didstr": "123456789-John,987654321-Doe,",
+            "didrole": "123456789-Parent,987654321-Parent,",
+            "didtype": "123456789-1,987654321-1,",
+            "isEsim": "123456789-0,987654321-0,",
+            "total_did_id": "123456789-111111111,987654321-222222222,",
+            "total_did_model": "123456789-g36f,987654321-g36d,",
+            "total_did_config": "123456789-CFG1,987654321-CFG2,",
         }
 
         watches = build_watch_index(payload, user_id=34534358)
 
-        self.assertEqual(set(watches), {"0907537528", "3004210780"})
-        self.assertEqual(watches["0907537528"].nickname, "Eva")
-        self.assertEqual(watches["0907537528"].did_id, "134873174")
-        self.assertEqual(watches["3004210780"].model, "g36d")
-        self.assertEqual(watches["3004210780"].user_id, 34534358)
+        self.assertEqual(set(watches), {"123456789", "987654321"})
+        self.assertEqual(watches["123456789"].nickname, "John")
+        self.assertEqual(watches["123456789"].did_id, "111111111")
+        self.assertEqual(watches["987654321"].model, "g36d")
+        self.assertEqual(watches["987654321"].user_id, 34534358)
 
     def test_build_watch_state_keeps_previous_on_no_data(self) -> None:
         watch = YQTWatch(
-            did="0907537528",
-            did_id="134873174",
+            did="123456789",
+            did_id="111111111",
             model="g36f",
-            nickname="Eva",
-            rolename="Dad",
+            nickname="John",
+            rolename="Parent",
         )
         previous = YQTWatchState(
             watch=watch,
-            latitude=52.040486,
-            longitude=5.1716948,
+            latitude=50.00000,
+            longitude=5.00000,
             battery=96,
             last_fix=datetime(2026, 4, 15, 12, 2, 0, tzinfo=UTC),
         )
@@ -77,6 +79,23 @@ class ApiHelpersTestCase(unittest.TestCase):
         self.assertEqual(current.battery, previous.battery)
         self.assertEqual(current.last_poll_status, 2)
         self.assertEqual(current.last_poll_message, "query failure")
+
+    def test_build_watch_state_keeps_previous_on_zero_zero_position(self) -> None:
+        watch = YQTWatch("123456789", "111111111", "g36f", "John", "Parent")
+        previous = YQTWatchState(
+            watch=watch,
+            latitude=50.00000,
+            longitude=5.00000,
+        )
+
+        current = build_watch_state(
+            watch,
+            {"status": 1, "data": [{"lat": "0.0", "lng": "0.0"}]},
+            previous,
+        )
+
+        self.assertEqual(current.latitude, previous.latitude)
+        self.assertEqual(current.longitude, previous.longitude)
 
     def test_is_login_timeout_response_detects_backend_session_expiry(self) -> None:
         self.assertTrue(is_login_timeout_response({"status": 607, "message": "Login timeout,Please login agian!"}))

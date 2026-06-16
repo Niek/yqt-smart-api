@@ -355,10 +355,25 @@ def build_watch_state(
     if battery is None:
         battery = coerce_int(response.get("battery"))
 
+    latitude = coerce_float(first_row.get("lat"))
+    longitude = coerce_float(first_row.get("lng"))
+
+    if latitude == 0 and longitude == 0:
+        if previous is not None:
+            return replace(
+                previous,
+                watch=watch,
+                raw_response=response,
+                last_poll_status=status,
+                last_poll_message=message,
+            )
+        first_row = {}
+        latitude = longitude = None
+
     return YQTWatchState(
         watch=watch,
-        latitude=coerce_float(first_row.get("lat")),
-        longitude=coerce_float(first_row.get("lng")),
+        latitude=latitude,
+        longitude=longitude,
         battery=battery,
         last_fix=parse_position_datetime(first_row.get("positiondate")),
         address=extract_address(first_row),
