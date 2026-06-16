@@ -73,7 +73,8 @@ The current MVP exposes:
 
 - one device per watch
 - a `device_tracker` with the last known position
-- battery and last-fix sensors
+- battery, last-fix, and speed sensors
+- disabled-by-default diagnostic sensors for nearby Wi-Fi access points and cell towers
 - a stale-location binary sensor
 - a button to request a fresh location update
 

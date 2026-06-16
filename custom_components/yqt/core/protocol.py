@@ -146,6 +146,8 @@ class YQTWatchState:
     speed: float | None = None
     direction: float | None = None
     accuracy: int | None = None
+    wifi_access_points: list[dict[str, object]] = field(default_factory=list)
+    cell_towers: list[dict[str, object]] = field(default_factory=list)
     raw_position: dict[str, Any] = field(default_factory=dict)
     raw_response: dict[str, Any] = field(default_factory=dict)
     last_poll_status: int | None = None
@@ -287,6 +289,70 @@ def coerce_accuracy(value: Any) -> int | None:
     return round(parsed)
 
 
+def clean_string(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    parsed = str(value).strip()
+    return parsed or None
+
+
+def parse_wifi_access_points(value: Any) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+
+    access_points: list[dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+
+        parts = item.split(",", 2)
+        if len(parts) < 2:
+            continue
+
+        bssid = clean_string(parts[0])
+        signal_dbm = coerce_int(parts[1])
+        if bssid is None or signal_dbm is None:
+            continue
+
+        access_points.append(
+            {
+                "bssid": bssid,
+                "signal_dbm": signal_dbm,
+                "ssid": parts[2].strip() if len(parts) > 2 else "",
+            }
+        )
+    return access_points
+
+
+def parse_cell_towers(row: dict[str, Any]) -> list[dict[str, object]]:
+    mcc = clean_string(row.get("mcc"))
+    mnc = clean_string(row.get("mnc"))
+    cells = row.get("tmp_base")
+    if mcc is None or mnc is None or not isinstance(cells, list):
+        return []
+
+    towers: list[dict[str, object]] = []
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+
+        lac = clean_string(cell.get("lac"))
+        cid = clean_string(cell.get("cid"))
+        if lac is None or cid is None:
+            continue
+
+        towers.append(
+            {
+                "mcc": mcc,
+                "mnc": mnc,
+                "lac": lac,
+                "cid": cid,
+                "rxlev": coerce_int(cell.get("rxlev")),
+            }
+        )
+    return towers
+
+
 def parse_position_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -380,6 +446,8 @@ def build_watch_state(
         speed=coerce_float(first_row.get("speed")),
         direction=coerce_float(first_row.get("direction")),
         accuracy=coerce_accuracy(first_row.get("gpsrang")),
+        wifi_access_points=parse_wifi_access_points(first_row.get("tmp_wifi")),
+        cell_towers=parse_cell_towers(first_row),
         raw_position=first_row,
         raw_response=response,
         last_poll_status=status,

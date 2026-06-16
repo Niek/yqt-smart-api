@@ -41,6 +41,15 @@
       },
       "last_fix": {
         "name": "Last fix"
+      },
+      "speed": {
+        "name": "Speed"
+      },
+      "wifi_access_points": {
+        "name": "Wi-Fi access points"
+      },
+      "cell_towers": {
+        "name": "Cell towers"
       }
     },
     "binary_sensor": {
