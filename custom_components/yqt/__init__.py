@@ -40,7 +40,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
-        "session": session,
     }
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -54,7 +53,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime = hass.data[DOMAIN].pop(entry.entry_id, None)
         if runtime is not None:
             runtime["coordinator"].async_shutdown()
-            await runtime["session"].close()
     return unload_ok
 
 

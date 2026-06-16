@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
 import unittest
 
+import custom_components.yqt as yqt
+from custom_components.yqt.const import DOMAIN
 from custom_components.yqt.core.protocol import (
     YQTWatch,
     YQTWatchState,
@@ -101,6 +105,42 @@ class ApiHelpersTestCase(unittest.TestCase):
         self.assertTrue(is_login_timeout_response({"status": 607, "message": "Login timeout,Please login agian!"}))
         self.assertTrue(is_login_timeout_response({"message": "Login timeout"}))
         self.assertFalse(is_login_timeout_response({"status": 1, "message": "OK"}))
+
+
+class IntegrationUnloadTestCase(unittest.TestCase):
+    def test_unload_does_not_close_home_assistant_managed_session(self) -> None:
+        class FakeConfigEntries:
+            async def async_unload_platforms(self, entry, platforms) -> bool:
+                return True
+
+        class FakeCoordinator:
+            def __init__(self) -> None:
+                self.shutdown_called = False
+
+            def async_shutdown(self) -> None:
+                self.shutdown_called = True
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.close_called = False
+
+            async def close(self) -> None:
+                self.close_called = True
+
+        coordinator = FakeCoordinator()
+        session = FakeSession()
+        entry = SimpleNamespace(entry_id="entry-1")
+        hass = SimpleNamespace(
+            config_entries=FakeConfigEntries(),
+            data={DOMAIN: {entry.entry_id: {"coordinator": coordinator, "session": session}}},
+        )
+
+        unload_ok = asyncio.run(yqt.async_unload_entry(hass, entry))
+
+        self.assertTrue(unload_ok)
+        self.assertTrue(coordinator.shutdown_called)
+        self.assertFalse(session.close_called)
+        self.assertNotIn(entry.entry_id, hass.data[DOMAIN])
 
 
 if __name__ == "__main__":
