@@ -8,6 +8,21 @@ Static analysis source:
 - `decoded/base/smali_classes3/f7/b.smali` (`SignInterceptor.java`) for the final signed-wire format.
 - `decoded/base/smali_classes3/d7/a.smali` for region backends.
 
+The checked-in decompile is APK `1.1.1` / `versionCode=12`. A later APK was
+checked on 2026-07-06 from:
+
+- `https://apk.niek.nl/api/download/com.tgelec.yqtsmart?arch=arm64`
+- package `com.tgelec.yqtsmart`
+- APK `versionName=1.1.5`, `versionCode=16`
+
+The latest APK keeps the same main REST path names. Relevant latest decompile
+files:
+
+- `smali_classes3/f7/a.smali` for Retrofit paths
+- `smali_classes3/m7/c.smali` for wrapper methods and URL getters
+- `smali_classes3/g7/a.smali` for region presets
+- `smali/com/tgelec/aqsh/activity/LoginActivity.smali` for login constants
+
 Live validation:
 
 - On 2026-04-15 I sent one fake login request to `https://europe.myaqsh.com:8093/app/public/S10APP/v2_new_userLogin2`.
@@ -18,6 +33,13 @@ Live validation:
   - `v2_sendOrder` with the fresh-location command returned a `code=200` acknowledgement.
   - `v2_findPictrueDoorInfo` returned real photo-wall rows with `path` and `createtime`.
   - `findTalkNewInfo` returned real chat records, including AMR voice-message attachments.
+- On 2026-07-06, a real Europe account confirmed that login now requires
+  protocol `version=1.0.2`; `version=1.0.1` returns an "old version" failure.
+- Plain Python probes against latest APK defaults `https://europe.myaqsh.com:11001`,
+  `:11002`, and `:11003` returned HTTP 400 "No required SSL certificate was
+  sent". The Python client therefore still uses the older public REST ports.
+- `v2_new_findUserDeviceByDid` returned data on both the public path and the
+  APK's session-bound path during live testing.
 
 White-label note:
 
@@ -36,7 +58,7 @@ The app keeps four server values per region:
 - `BIND_URL`: push/bind host
 - `MQTT_SERVER`: MQTT broker
 
-Examples:
+Legacy public REST examples used by the Python client:
 
 - `europe`
   - `BASE_URL`: `https://europe.myaqsh.com:8093`
@@ -71,6 +93,25 @@ There is also a Shenzhen default set used for upload and fallback values:
 - `https://sz.myaqsh.com:8087`
 - upload default `https://sz.myaqsh.com:10000`
 - MQTT fallback `tcp://sz.myaqsh.com:1883`
+
+Latest APK `1.1.5` defaults changed the regional presets:
+
+- `BASE_URL`: `https://<region>.myaqsh.com:11001`
+- `BASE_COLLECTION_URL`: `https://<region>.myaqsh.com:11002`
+- `BIND_URL`: `https://<region>.myaqsh.com:11003`
+- `MQTT_SERVER`: `mqtts://<region>.myaqsh.com:8883`
+- extra regional endpoint: `https://<region>.myaqsh.com:9500`
+
+The Shenzhen fallback in the latest APK is:
+
+- `https://sz.myaqsh.com:8093`
+- `https://sz.myaqsh.com:8098`
+- `https://sz.myaqsh.com:8087`
+- `mqtts://sz.myaqsh.com:8883`
+- extra endpoint `https://sz.myaqsh.com:18000`
+
+Do not blindly move the Python client to the `11001`/`11002`/`11003` endpoints:
+those currently appear to require a client TLS certificate.
 
 ### 2. Session handling
 
@@ -120,18 +161,25 @@ SECRPRO + key1 + value1 + key2 + value2 + ... + SECRPRO
 sign = sha256(md5(md5(md5(built_string)))).lower()
 ```
 
+In APK `1.1.5`, the app no longer broadly hardcodes `KHDIW` in wrapper methods.
+It stores a runtime server-provided `SignFlag` into `Lm7/c.a` and passes that
+into signed requests. The public REST endpoint still accepts `KHDIW` in live
+testing, so the Python client keeps that default for now.
+
 ### 5. Login defaults used by the app
 
 The Android login flow hardcodes:
 
 - `appid=aaagg11145`
 - `flag=394`
-- `version=1.0.1`
+- `version=1.0.2` in APK `1.1.5`
 - `isIPHONE=1`
 - `language=enUS` by default for English
 - `sign_flag=KHDIW`
 
-The `isIPHONE` name is misleading; the Android app still sends `1`.
+The `isIPHONE` name is misleading; the Android app still sends `1`. The login
+`version` field is a protocol/client version, not the APK package version. APK
+`1.1.5` still sends login `version=1.0.2`.
 
 ## Useful endpoints
 
@@ -194,6 +242,28 @@ Response includes:
 - `total_did_model`
 
 This may be useful when the plain device list does not expose enough `did_id` context.
+
+### Find one device by DID
+
+The checked-in APK decompile and APK `1.1.5` both define:
+
+- `GET /app/{sid}/S10APP/v2_new_findUserDeviceByDid`
+
+Query:
+
+- `language`
+- `timestamppp`
+- `did`
+- `did_id`
+- `sign_flag`
+- `sign`
+
+The backend also accepted the public path during live testing:
+
+- `GET /app/public/S10APP/v2_new_findUserDeviceByDid`
+
+Prefer the session-bound form for APK parity, but keep the public form in mind
+as a compatible backend alias.
 
 ### Last position
 
