@@ -13,6 +13,7 @@ from custom_components.yqt.core.protocol import (
     build_watch_index,
     build_watch_state,
     compute_sign,
+    DEFAULT_CLIENT_VERSION,
     is_login_timeout_response,
 )
 
@@ -40,11 +41,11 @@ class ApiHelpersTestCase(unittest.TestCase):
             "password": "wire-password",
             "sign_flag": "KHDIW",
             "timestamppp": "1776250000000",
-            "version": "1.0.1",
+            "version": DEFAULT_CLIENT_VERSION,
         }
         self.assertEqual(
             compute_sign(params),
-            "7d9d8b343be1f1a4792631f5a4ff43ec6d3a97b1bf4584ff16e91481113d4069",
+            "f68fdd3258719d75e4eda3a0a1ec838e6f5140fc1f23c8eb7db53f61b2c834f6",
         )
 
     def test_build_watch_index_from_login_metadata(self) -> None:
