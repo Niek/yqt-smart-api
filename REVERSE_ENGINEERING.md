@@ -1,658 +1,403 @@
 # YQT SMART Reverse Engineering Notes
 
-Static analysis source:
+This document records protocol behavior observed in the YQT SMART Android app
+and through limited live API testing. It distinguishes static APK findings from
+live validation because vendor behavior can change without notice.
 
-- `decoded/base/smali_classes3/c7/a.smali` (`SecurityGuardAPI.java`) for Retrofit paths and parameter names.
-- `decoded/base/smali_classes3/j7/c.smali` for wrapper methods, base URLs, defaults, and session handling.
-- `decoded/base/smali_classes3/d7/b.smali` (`SignUtils.java`) for password hashing and request signing.
-- `decoded/base/smali_classes3/f7/b.smali` (`SignInterceptor.java`) for the final signed-wire format.
-- `decoded/base/smali_classes3/d7/a.smali` for region backends.
+The backend appears to be a shared OEM platform. The YQT SMART APK also
+references `KiDSnav` and `MonitorGPS`, and related apps such as SeTracker,
+SeTracker 2, and CarePro+ appear to use the same service.
 
-The checked-in decompile is APK `1.1.1` / `versionCode=12`. A later APK was
-checked on 2026-07-06 from:
+## Analyzed versions
 
-- `https://apk.niek.nl/api/download/com.tgelec.yqtsmart?arch=arm64`
-- package `com.tgelec.yqtsmart`
-- APK `versionName=1.1.5`, `versionCode=16`
+| APK | Version code | Checked |
+| --- | ---: | --- |
+| `1.1.1` | 12 | 2026-04-15 |
+| `1.1.5` | 16 | 2026-07-25 |
 
-The latest APK keeps the same main REST path names. Relevant latest decompile
-files:
+Package name: `com.tgelec.yqtsmart`.
 
-- `smali_classes3/f7/a.smali` for Retrofit paths
-- `smali_classes3/m7/c.smali` for wrapper methods and URL getters
-- `smali_classes3/g7/a.smali` for region presets
-- `smali/com/tgelec/aqsh/activity/LoginActivity.smali` for login constants
+APK `1.1.5` retains the main REST path names from `1.1.1`, but changes the
+servers and request transport.
 
-Live validation:
+## Current protocol
 
-- On 2026-04-15 I sent one fake login request to `https://europe.myaqsh.com:8093/app/public/S10APP/v2_new_userLogin2`.
-- The server returned HTTP 200 with:
-  `{"status":2,"message":"Either account is not registered, Area selected below is incorrect or your entry may contain spaces."}`
-- That confirms the static analysis is good enough to start a Python client.
-- On 2026-04-15 I also spot-checked a real Europe account:
-  - `v2_sendOrder` with the fresh-location command returned a `code=200` acknowledgement.
-  - `v2_findPictrueDoorInfo` returned real photo-wall rows with `path` and `createtime`.
-  - `findTalkNewInfo` returned real chat records, including AMR voice-message attachments.
-- On 2026-07-06, a real Europe account confirmed that login now requires
-  protocol `version=1.0.2`; `version=1.0.1` returns an "old version" failure.
-- On 2026-07-25, the old `:8093` login endpoint started returning status `3`,
-  "The current app is unavailable. Please upgrade the app."
-- Plain requests to the APK `1.1.5` `:11001` endpoint returned HTTP 400
-  "No required SSL certificate was sent". A request using both the APK's client
-  certificate and encrypted request envelope returned the normal status `2`
-  response for a fake account. The Python client now uses this current transport.
-- `v2_new_findUserDeviceByDid` returned data on both the public path and the
-  APK's session-bound path during live testing.
+### Regional servers
 
-White-label note:
+APK `1.1.5` uses the same port layout for each configured region:
 
-- The APK is branded `YQT SMART`, but the assets and code also reference `KiDSnav` and `MonitorGPS`.
-- Your note about `SeTracker`, `SeTracker 2`, and `CarePro+` using the same backend is consistent with what the APK suggests.
-- Treat this backend as an OEM/shared platform rather than a YQT-only API.
+| Setting | Value |
+| --- | --- |
+| Primary API | `https://<region>.myaqsh.com:11001` |
+| Collection API | `https://<region>.myaqsh.com:11002` |
+| Bind service | `https://<region>.myaqsh.com:11003` |
+| MQTT | `mqtts://<region>.myaqsh.com:8883` |
+| Extra regional endpoint | `https://<region>.myaqsh.com:9500` |
 
-## Important findings
+Known region names are `europe`, `asia`, `northam`, `southam`, `hk`, `vie`,
+and `russ`.
 
-### 1. Base endpoints by region
-
-The app keeps four server values per region:
-
-- `BASE_URL`: primary API host
-- `BASE_COLLECTION_URL`: secondary collection host
-- `BIND_URL`: push/bind host
-- `MQTT_SERVER`: MQTT broker
-
-Older public REST examples:
-
-- `europe`
-  - `BASE_URL`: `https://europe.myaqsh.com:8093`
-  - `BASE_COLLECTION_URL`: `https://europe.myaqsh.com:8082`
-  - `BIND_URL`: `https://europe.myaqsh.com:8084`
-  - `MQTT_SERVER`: `tcp://52.28.132.157:1883`
-- `asia`
-  - `BASE_URL`: `https://asia.myaqsh.com:8093`
-  - `BASE_COLLECTION_URL`: `https://asia.myaqsh.com:8082`
-  - `BIND_URL`: `https://asia.myaqsh.com:8084`
-  - `MQTT_SERVER`: `tcp://54.169.10.136:1883`
-- `northam`
-  - `BASE_URL`: `https://northam.myaqsh.com:8093`
-  - `MQTT_SERVER`: `tcp://54.153.6.9:1883`
-- `southam`
-  - `BASE_URL`: `https://southam.myaqsh.com:8093`
-  - `MQTT_SERVER`: `tcp://54.207.93.14:1883`
-- `hk`
-  - `BASE_URL`: `https://hk.myaqsh.com:8093`
-  - `MQTT_SERVER`: `tcp://47.91.138.192:1883`
-- `vie`
-  - `BASE_URL`: `https://vie.myaqsh.com:8093`
-  - `MQTT_SERVER`: `tcp://103.7.40.198:1883`
-- `russ`
-  - `BASE_URL`: `https://russ.myaqsh.com:8093`
-  - `MQTT_SERVER`: `tcp://156.229.16.166:1883`
-
-There is also a Shenzhen default set used for upload and fallback values:
-
-- `https://sz.myaqsh.com:8093`
-- `https://sz.myaqsh.com:8098`
-- `https://sz.myaqsh.com:8087`
-- upload default `https://sz.myaqsh.com:10000`
-- MQTT fallback `tcp://sz.myaqsh.com:1883`
-
-Latest APK `1.1.5` defaults changed the regional presets:
-
-- `BASE_URL`: `https://<region>.myaqsh.com:11001`
-- `BASE_COLLECTION_URL`: `https://<region>.myaqsh.com:11002`
-- `BIND_URL`: `https://<region>.myaqsh.com:11003`
-- `MQTT_SERVER`: `mqtts://<region>.myaqsh.com:8883`
-- extra regional endpoint: `https://<region>.myaqsh.com:9500`
-
-The Shenzhen fallback in the latest APK is:
+The APK also contains Shenzhen fallback values:
 
 - `https://sz.myaqsh.com:8093`
 - `https://sz.myaqsh.com:8098`
 - `https://sz.myaqsh.com:8087`
 - `mqtts://sz.myaqsh.com:8883`
-- extra endpoint `https://sz.myaqsh.com:18000`
+- `https://sz.myaqsh.com:18000`
 
-The current `11001`/`11002`/`11003` endpoints require the APK's client TLS
-certificate. The REST API additionally requires the APK's encrypted request
-envelope; mTLS with the old form body still returns the forced-upgrade response.
+The client currently uses only the primary API. The purpose and transport
+requirements of the collection, bind, and extra endpoints have not been
+validated.
 
-### 2. Session handling
+### TLS client identity
 
-- After login, the app stores `UserLoginResponse.sid` as `session_id`.
-- Many device APIs use `/app/{sid}/...`, so `sid` is required after login.
-- The app also persists cookies from `Set-Cookie`, but the basic login probe worked without pre-existing cookies.
-- On the live account, `v2_findLastPosition`, `v2_findDeviceSwitch`, and `v2_findAlarmInfo` all rejected requests with `status=-2` and `message="params error"` unless `did_id` was sent alongside `did`.
+The `:11001`/`:11002`/`:11003` servers require mutual TLS. A plain TLS request
+to `:11001` returns HTTP 400:
 
-### 3. Password hashing
+```text
+No required SSL certificate was sent
+```
 
-The Android app does not send the raw password.
+[`custom_components/yqt/core/client.pem`](custom_components/yqt/core/client.pem)
+contains the shared client certificate and encrypted private key bundled with
+the Android app. It is not a user-specific credential.
 
-It transforms it as:
+- Subject CN: `AQSHAPP-Client-2026-001`
+- Valid from: 2026-05-19
+- Expires: 2029-05-18
 
-1. `md5(password)`
-2. `sha256(result_of_step_1)`
+The vendor may replace or revoke this identity before its stated expiry.
 
-So:
+### Password hashing
+
+The raw account password is not sent. The app computes:
 
 ```text
 password_wire = sha256(md5(password))
 ```
 
-### 4. Request signing
+### Inner request and signature
 
-Requests marked with `KEY_NEW_SIGN` are rewritten by the OkHttp interceptor before going on the wire.
+Endpoint parameter lists in this document describe the inner request object,
+not the current on-wire query or body.
 
-The final signed request looks like this:
+For a signed request:
 
-- `sign_flag=KHDIW`
-- `sign=<computed_signature>`
-- no `KEY_NEW_SIGN` query parameter
+1. Add `timestamppp`, normally the current Unix time in milliseconds.
+2. Add `sign_flag`; the client currently defaults to `KHDIW`.
+3. Add `app_flag=394`.
+4. Exclude `sign`, discard null values, and sort parameter names
+   lexicographically.
+5. Build:
 
-Signature algorithm:
+   ```text
+   SECRPRO + key1 + value1 + key2 + value2 + ... + SECRPRO
+   ```
 
-1. Collect all request parameters except `sign` and the `KEY_NEW_SIGN...` marker params.
-2. Sort parameter names lexicographically.
-3. Build:
+6. Compute:
+
+   ```text
+   sign = sha256(md5(md5(md5(built_string)))).lower()
+   ```
+
+7. Add the resulting `sign` to the inner object.
+
+`flag=394`, used by login, and `app_flag=394`, added by the transport, are
+separate fields.
+
+APK `1.1.5` can store a server-provided `SignFlag` and pass it into later
+requests. Live testing confirmed that the current encrypted login endpoint
+still accepts `KHDIW`, so the Python client retains that default.
+
+### Encrypted envelope
+
+Standard API requests use the following transport:
+
+1. Select one of five APK-embedded AES key/IV pairs and its index.
+2. For form-style POST operations, percent-encode the inner keys and values.
+3. Serialize the signed inner object as compact JSON.
+4. Apply PKCS#7 padding and AES-CBC encryption.
+5. Hex-encode the ciphertext.
+6. Send the outer envelope:
+
+   ```json
+   {
+     "encryptIndex": 1,
+     "encryptData": "<hex ciphertext>"
+   }
+   ```
+
+For GET requests, the two envelope fields are query parameters. For standard
+POST requests, the envelope is a JSON body. Both include:
 
 ```text
-SECRPRO + key1 + value1 + key2 + value2 + ... + SECRPRO
+X-Encrypt-Index: <index>
 ```
 
-4. Compute:
+Encrypted API responses use the same envelope and key index. The implementation
+lives in
+[`custom_components/yqt/core/transport.py`](custom_components/yqt/core/transport.py).
 
-```text
-sign = sha256(md5(md5(md5(built_string)))).lower()
-```
+Multipart endpoints are a known exception requiring further validation. The
+standalone client's multipart helper still uses the legacy signed multipart
+body over mTLS; it has not been confirmed to work after the July 2026 transport
+change.
 
-APK `1.1.5` adds `app_flag=394` before computing this signature. It then
-AES-CBC encrypts the signed parameters with one of five embedded key/IV pairs,
-hex-encodes the ciphertext, and sends `encryptIndex` plus `encryptData` with an
-`X-Encrypt-Index` header. API responses use the same encrypted envelope.
+### Login defaults
 
-In APK `1.1.5`, the app no longer broadly hardcodes `KHDIW` in wrapper methods.
-It stores a runtime server-provided `SignFlag` into `Lm7/c.a` and passes that
-into signed requests. The public REST endpoint still accepts `KHDIW` in live
-testing, so the Python client keeps that default for now.
-
-### 5. Login defaults used by the app
-
-The Android login flow hardcodes:
+APK `1.1.5` uses:
 
 - `appid=aaagg11145`
 - `flag=394`
-- `version=1.0.2` in APK `1.1.5`
+- `version=1.0.2`
 - `isIPHONE=1`
-- `language=enUS` by default for English
-- `sign_flag=KHDIW`
+- `language=enUS` for English
+- `sign_flag=KHDIW` initially
 
-The `isIPHONE` name is misleading; the Android app still sends `1`. The login
-`version` field is a protocol/client version, not the APK package version. APK
-`1.1.5` still sends login `version=1.0.2`.
+`isIPHONE` is sent by the Android app despite its name. The login `version` is a
+protocol/client version, not the APK package version.
 
-## Useful endpoints
+### Sessions
 
-### Login
+- Login returns `sid`, which the app stores as `session_id`.
+- Most device-specific APIs use `/app/{sid}/...`.
+- Public login and device-discovery endpoints use `/app/public/...`.
+- The app also persists response cookies.
+- `v2_findLastPosition`, `v2_findDeviceSwitch`, and `v2_findAlarmInfo` required
+  both `did` and `did_id` during live testing.
 
-- `POST /app/public/S10APP/v2_new_userLogin2`
-- Fields:
-  - `language`
-  - `appid`
-  - `password`
-  - `loginname`
-  - `flag`
-  - `version`
-  - `isIPHONE`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
+## Validation history
 
-Response model:
+| Date | Transport | Result |
+| --- | --- | --- |
+| 2026-04-15 | Legacy `:8093` | Fake login returned normal status `2`; a real account confirmed fresh-location `sendOrder`, Photo Wall listing, and chat reads. |
+| 2026-07-06 | Legacy `:8093` | Login required protocol `version=1.0.2`; `1.0.1` returned an old-version error. Both public and session-bound `v2_new_findUserDeviceByDid` paths returned data. |
+| 2026-07-25 | Legacy `:8093` | Login began returning status `3`: “The current app is unavailable. Please upgrade the app.” |
+| 2026-07-25 | Current `:11001` | Plain TLS failed for lack of a client certificate. mTLS with the legacy body still returned the forced-upgrade response. mTLS plus the encrypted envelope returned the normal status `2` response for a fake account. |
+
+Feature observations below that are labeled “legacy-live” were not necessarily
+retested after the current transport became mandatory.
+
+Evidence labels used below:
+
+- **Current-live:** confirmed against the mTLS and encrypted transport.
+- **Legacy-live:** confirmed before the July 2026 transport change.
+- **APK:** found through static analysis but not necessarily tested live.
+- **Implemented:** present in the Python client but not necessarily revalidated
+  live.
+
+## Endpoint reference
+
+Unless an exception is stated, requests are signed and wrapped using the
+current transport above. Tables list endpoint-specific inner parameters;
+common fields such as `language`, `timestamppp`, `sign_flag`, `app_flag`, and
+`sign` are omitted for brevity.
+
+### Account and devices
+
+| Operation | Method and path | Endpoint-specific inner parameters | Evidence |
+| --- | --- | --- | --- |
+| Login | `POST /app/public/S10APP/v2_new_userLogin2` | `appid`, hashed `password`, `loginname`, `flag`, `version`, `isIPHONE` | Current-live |
+| Find user devices | `GET /app/public/S10APP/v2_new_findUserDeviceInfo` | `user_id`, `loginname`, `type` | APK, implemented |
+| Device-list metadata | `GET /app/public/S10APP/v2_findDeviceListByUserId` | `user_id`, `loginname` | APK, implemented |
+| Find one device | `GET /app/{sid}/S10APP/v2_new_findUserDeviceByDid` | `did`, `did_id` | APK, legacy-live |
+| Find one device alias | `GET /app/public/S10APP/v2_new_findUserDeviceByDid` | `did`, `did_id` | Legacy-live, used by the standalone client |
+
+Login responses commonly include:
 
 - `status`
 - `message`
 - `sid`
-- `data` (list of users)
+- `data`, containing user rows
 - `total_did_id`
 - `total_did_config`
 - `total_did_model`
 
-### Find user devices
-
-- `GET /app/public/S10APP/v2_new_findUserDeviceInfo`
-- Query:
-  - `language`
-  - `timestamppp`
-  - `user_id`
-  - `loginname`
-  - `type`
-  - `sign_flag`
-  - `sign`
-
-Response data is a list of `UserDeviceInfo`.
-
-### Find device list metadata
-
-- `GET /app/public/S10APP/v2_findDeviceListByUserId`
-- Query:
-  - `language`
-  - `timestamppp`
-  - `user_id`
-  - `loginname`
-  - `sign_flag`
-  - `sign`
-
-Response includes:
-
-- `didstr`
-- `didrole`
-- `total_did_id`
-- `total_did_config`
-- `total_did_model`
+`v2_findDeviceListByUserId` also returns `didstr` and `didrole`. These values
+help map a watch `did` to the `did_id` required by several device APIs.
+
+The APK uses the session-bound `v2_new_findUserDeviceByDid` path. The standalone
+client currently uses the public alias because the backend accepted both during
+live testing.
+
+### Position, alarms, and switches
+
+| Operation | Method and path | Endpoint-specific inner parameters | Evidence |
+| --- | --- | --- | --- |
+| Last position | `GET /app/{sid}/S10APP/v2_findLastPosition` | `did`, `did_id`, optional `id` | Legacy-live, implemented |
+| Multiple-device position | `GET /app/{sid}/S10APP/v2_findLastPositionByMore` | `loginname`, `dids`, `did`, optional `id` | Legacy-live, implemented |
+| Alarm history | `GET /app/{sid}/S10APP/v2_findAlarmInfo` | `did`, `did_id`, `flag`, `count`, `createtime` | Legacy-live, implemented |
+| Device switches | `GET /app/{sid}/S10APP/v2_findDeviceSwitch` | `did`, `did_id` | Legacy-live, implemented |
+
+Position responses include `battery` and a `data` list. Position rows can
+contain `lat`, `lng`, `speed`, `direction`, `positiondate`, `address`,
+`tmp_wifi`, cell-tower data, and related fields.
+
+Observed quirks:
+
+- `v2_findAlarmInfo` can return status `2`, “No new data”, for a valid empty
+  result.
+- `v2_findLastPositionByMore` rejected `dids` without a non-empty `did`.
+- Supplying both `dids` and one selected `did` returned only the selected
+  device's useful position data.
+- Polling `v2_findLastPosition` per watch is therefore more reliable for Home
+  Assistant.
+
+## Commands and feature endpoints
+
+### `v2_sendOrder`
+
+Most watch actions use:
 
-This may be useful when the plain device list does not expose enough `did_id` context.
+```text
+POST /app/{sid}/S10APP/v2_sendOrder
+```
 
-### Find one device by DID
-
-The checked-in APK decompile and APK `1.1.5` both define:
-
-- `GET /app/{sid}/S10APP/v2_new_findUserDeviceByDid`
-
-Query:
-
-- `language`
-- `timestamppp`
-- `did`
-- `did_id`
-- `sign_flag`
-- `sign`
-
-The backend also accepted the public path during live testing:
-
-- `GET /app/public/S10APP/v2_new_findUserDeviceByDid`
-
-Prefer the session-bound form for APK parity, but keep the public form in mind
-as a compatible backend alias.
-
-### Last position
-
-- `GET /app/{sid}/S10APP/v2_findLastPosition`
-- Query:
-  - `language`
-  - `did_id`
-  - `did`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
-  - optional `id`
-
-Response fields include:
-
-- `battery`
-- `data` list with `lat`, `lng`, `speed`, `direction`, `positiondate`, `address`, `tmp_wifi`, and related fields.
-
-### Multiple-device last position
-
-- `GET /app/{sid}/S10APP/v2_findLastPositionByMore`
-- Query:
-  - `language`
-  - `loginname`
-  - `dids`
-  - `did`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
-  - optional `id`
-
-### Alarm history
-
-- `GET /app/{sid}/S10APP/v2_findAlarmInfo`
-- Query:
-  - `language`
-  - `did`
-  - `did_id`
-  - `flag`
-  - `count`
-  - `createtime`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
-
-### Device switches
-
-- `GET /app/{sid}/S10APP/v2_findDeviceSwitch`
-- Query:
-  - `did_id`
-  - `did`
-  - `language`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
-
-## Feature-specific commands
-
-Two separate command families show up in this APK:
-
-- `POST /app/{sid}/S10APP/v2_sendOrder` for most watch commands
-- `POST /S10APP/retrieveDeviceInfo` for some lost-device helpers such as ringing the watch and fetching nearby photos
-
-The `sendOrder` payload shape is:
-
-- `sid`
-- `language`
-- `sendurl`
-- `timestamppp`
-- `sign_flag`
-- `sign`
-
-One important quirk: `v2_sendOrder` replies with `code=200` style command acknowledgements, not the usual `status=1` / `message=...` envelope.
-
-### Get fresh position
-
-The app does not call a separate "refresh now" location endpoint. It sends an async command, then polls normal position data.
-
-- Client status:
-  - implemented in `yqt_client.py` as `fresh-position`
-  - follow-up polling implemented as `last-position` / `last-positions`
-- Trigger:
-  - `POST /app/{sid}/S10APP/v2_sendOrder`
-  - `sendurl=test?dev_id=<did>&com=D3&dev_model=<model>`
-- Follow-up read:
-  - `GET /app/{sid}/S10APP/v2_findLastPosition`
-- Live confirmation:
-  - the backend acknowledged the command with a payload shaped like:
-    `{"dev_id":"...","com":"D3","code":200,"current_utc_time":"..."}`
-- UI string `location_success` matches this behavior:
-  - "The positioning command was sent successfully, please wait for refresh!"
-
-### Message read/send
-
-Read chat history:
-
-- Client status:
-  - read implemented as `chat-read`
-  - text send implemented as `chat-send`
-  - attachment download still pending
-- `POST /app/{sid}/S10APP/findTalkNewInfo`
-- Fields:
-  - `language`
-  - `user_id`
-  - `did_id`
-  - `did`
-  - `create_time`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
-- Live confirmation:
-  - this returned real rows with fields such as `id`, `device_info_id`, `file_type`, `path`, and `create_time`
-  - on the tested account the returned rows were voice messages with `.amr` paths
-  - after clearing Android app storage and logging in again, the app showed the same 3 rows, so this does not appear to have a historical paging mode
-  - a fresh app-to-watch text sent via `addTalkNewInfo` did not show up via a follow-up `chat-read`, so this endpoint appears to behave like "new inbound messages from watch" rather than a full bidirectional thread export
-
-Send text or generic chat/file messages:
-
-- `POST /app/{sid}/S10APP/addTalkNewInfo`
-- Multipart body
-- Wrapper `j7/c.i(...)` builds:
-  - `language`
-  - `timestamppp`
-  - `did_id`
-  - `did`
-  - `user_id`
-  - `loginname`
-  - `file_type`
-  - `flag`
-  - `app_flag=394`
-  - `sign_flag`
-  - optional `message`
-  - optional multipart `data` file part
-  - `sign`
-- Live confirmation:
-  - plain text works with:
-    - `file_type=3`
-    - `flag=1`
-    - `message=<text>`
-  - the server returned:
-    - `{"status":1,"message":"OK ","current_utc_time":"..."}`
-- This looks like the main generic send-text / send-file entrypoint for one-to-one watch chat.
-
-Send voice/audio:
-
-- `POST /app/{sid}/S10APP/v2_post_audiorecord`
-- Multipart body
-- Wrapper `j7/c.n3(user_id, did_id, did, imei, file)`
-
-Send photo:
-
-- `POST /app/{sid}/S10APP/v2_post_photoInfo`
-- Multipart body
-- Wrapper `j7/c.o3(user_id, did_id, did, imei, file)`
-
-Download attachments:
-
-- `GET /app/{sid}/S10APP/v2_get_file`
-- Query:
-  - `language`
-  - `timestamppp`
-  - `did_id`
-  - `did`
-  - `dev_id`
-  - `filename`
-  - `type`
-  - `sign_flag`
-  - `sign`
-- The app also builds direct signed download URLs against:
-  - `GET /app/{sid}/S10APP/v2_file_download`
-  - using stored `path` values from the chat/photo records
-
-### Play sounds on device
-
-This feature is implemented as a lost-device helper, not a normal `sendOrder` command.
-
-- Client status:
-  - pending
-- Endpoint:
-  - `POST /S10APP/retrieveDeviceInfo`
-- Fields:
-  - `a=playvoice`
-  - `play_status=1` to start
-  - `play_status=0` to stop
-  - `did`
-  - `did_id`
-  - `language`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
-- UI behavior from `RetrieveDeviceSoundActivity`:
-  - the main button sends `play_status=1`
-  - the dialog stop button sends `play_status=0`
-  - the dialog also auto-sends `play_status=0` after 60 seconds
-- Live note:
-  - on my probe, both start and stop calls timed out instead of returning a clean JSON ack
-  - that suggests the server may wait on a device-side flow here, so client code should treat this endpoint carefully
-
-### Remote camera
-
-There are two camera-related features in this APK: still-photo capture and live video monitoring.
-
-- Client status:
-  - pending
-  - can be approximated manually today via raw `send-order`
-Still-photo remote capture:
-
-- Trigger:
-  - `POST /app/{sid}/S10APP/v2_sendOrder`
-- Known `sendurl` variants:
-  - default camera: `test?dev_id=<did>&com=D75`
-  - front camera on supported devices: `test?dev_id=<did>&com=D134`
-- The Photo Wall presenter uses these commands, then refreshes the gallery.
-
-Live video monitoring ("Video Guardianship"):
-
-- The app sends a `v2_sendOrder` command to start the video-monitoring flow.
-- Known builders:
-  - `test?dev_id=<did>&com=D196&param1=<loginname>&param2=<...>&param3=<...>`
-  - some variants append `&param4=2`
-- While a live session is active, switching the watch camera uses:
-  - `test?dev_id=<did>&com=D197`
-- The actual media/session transport is handled elsewhere in the app, not by a simple REST polling endpoint.
-
-### Gallery
-
-Photo Wall gallery:
-
-- Client status:
-  - list implemented as `photowall-list`
-  - direct image download implemented as `photowall-download`
-  - local cache mirroring intentionally not implemented
-- List:
-  - `GET /app/{sid}/S10APP/v2_findPictrueDoorInfo`
-- Query:
-  - `language`
-  - `timestamppp`
-  - `did`
-  - `max_id`
-  - `sign_flag`
-  - `sign`
-- Download image:
-  - `GET /app/{sid}/S10APP/v2_downloadPictrueDoor`
-- Query:
-  - `timestamppp`
-  - `did`
-  - `filename`
-  - `sign_flag`
-  - `sign`
-- Live confirmation:
-  - the tested account returned real gallery rows with fields like `id`, `type`, `path`, and `createtime`
-  - `photowall-download` works when `filename` is the basename only, for example `2026-04-14-16-49-33.jpg`
-  - sending the full stored path to `v2_downloadPictrueDoor` returned HTTP 404 `read: error`
-  - the final wire format uses normal `sign`, not a literal `KEY_NEW_SIGN` query parameter
-
-Lost-device "nearby photos":
-
-- Client status:
-  - pending
-- Endpoint:
-  - `POST /S10APP/retrieveDeviceInfo`
-- Fields:
-  - `a=photo`
-  - `did`
-  - `did_id`
-  - `language`
-  - `timestamppp`
-  - `sign_flag`
-  - `sign`
-- This is the "Nearby photos" view under the retrieve-device flow.
-- Live note:
-  - the tested account returned `{"status":3,"message":"empty"}` when no lost-device photos were available
-
-### Remote restart
-
-Remote restart is a normal `sendOrder` command:
-
-- Client status:
-  - pending as a dedicated helper
-  - already possible via raw `send-order`
-- `POST /app/{sid}/S10APP/v2_sendOrder`
-- `sendurl=test?dev_id=<did>&com=D2&dev_model=<model>`
-
-Related commands in the same action family:
-
-- factory reset:
-  - `test?dev_id=<did>&com=D160`
-- remote shutdown:
-  - `test?dev_id=<did>&com=D17&dev_model=<model>`
-
-Do not confuse restart with `D197`; `D197` is the live-video camera-switch command.
-
-### Time sync
-
-In this APK, time sync is implemented as a full `sendOrder` command carrying both timezone and current time.
-
-- Client status:
-  - pending as a dedicated helper
-  - already possible via raw `send-order` once the timezone payload builder is reproduced
-- Trigger:
-  - `POST /app/{sid}/S10APP/v2_sendOrder`
-  - `sendurl=test?dev_id=<did>&com=D280&param1=<tz_value>&param2=<urlencoded_yyyy-MM-dd_HH:mm:ss>`
-- `param1` is not the raw IANA timezone id.
-  - The app computes a timezone offset-like value via `p4/a.a()`, taking DST into account.
-- The activity string matches the implementation:
-  - "Synchronize the phone's time and time zone to the watch"
-
-There is also an older/simple `CMDUtils.s(did, int)` builder for `D57`, but `TimeSynActivity` in this APK uses `D280`, not `D57`.
-
-### Practical quirks from live testing
-
-- `v2_findAlarmInfo` may return `{"status":2,"message":"No new data"}` for a valid empty result set.
-- `v2_findLastPositionByMore` is not a true bulk endpoint in the obvious sense:
-  - sending `dids` without a non-empty `did` returned `status=-2` / `params error`
-  - sending both `dids` and one selected `did` returned a valid payload for that selected device
-- For Home Assistant, polling `v2_findLastPosition` per device is more reliable than relying on `v2_findLastPositionByMore`.
-
-## Python prototype
-
-The companion file [`yqt_client.py`](/Users/niek/Documents/Code/YQT/yqt_client.py) implements:
-
-- the password hash
-- the request sign algorithm
-- region presets
-- cookie/session handling
-- a growing set of high-value endpoints
-- a small CLI for manual probing
-
-Implemented CLI commands:
-
-- `login`
-- `devices`
-- `device-list-meta`
-- `send-order`
-- `fresh-position`
-- `last-position`
-- `last-positions`
-- `alarms`
-- `switches`
-- `photowall-list`
-- `photowall-download`
-- `chat-read`
-- `chat-send`
-
-Still pending as dedicated helpers:
-
-- chat send:
-  - `v2_post_audiorecord`
-  - `v2_post_photoInfo`
-- chat attachment download:
-  - `v2_get_file`
-  - `v2_file_download`
-- lost-device sound playback:
-  - `retrieveDeviceInfo a=playvoice`
-- remote camera helpers:
-  - `D75`
-  - `D134`
-  - `D196`
-  - `D197`
-- remote restart helper:
-  - `D2`
-- time sync helper:
-  - `D280`
-- lost-device nearby photos:
-  - `retrieveDeviceInfo a=photo`
-
-## Home Assistant direction
-
-The cleanest first HA integration is probably polling, not MQTT:
-
-1. config flow: username, password, region
-2. login once, store `sid` and cookies in `ConfigEntry.runtime_data`
-3. coordinator:
-   - `find_user_device_info`
-   - `find_last_position` for each device
-   - optionally `find_alarm_info`
-4. entities:
-   - `device_tracker`
-   - battery sensor
-   - last-seen sensor
-   - maybe alarm/event sensor later
-
-MQTT is promising for push updates, but I have not extracted the topic layout yet.
+The inner payload contains `sid` and `sendurl` in addition to the common signed
+fields. Successful command acknowledgements use `code=200`, rather than the
+usual `status=1` response shape.
+
+| Action | `sendurl` | Evidence |
+| --- | --- | --- |
+| Request fresh location | `test?dev_id=<did>&com=D3&dev_model=<model>` | Legacy-live |
+| Restart | `test?dev_id=<did>&com=D2&dev_model=<model>` | APK |
+| Factory reset | `test?dev_id=<did>&com=D160` | APK |
+| Shutdown | `test?dev_id=<did>&com=D17&dev_model=<model>` | APK |
+| Default-camera photo | `test?dev_id=<did>&com=D75` | APK |
+| Front-camera photo | `test?dev_id=<did>&com=D134` | APK |
+| Start video monitoring | `test?dev_id=<did>&com=D196&param1=<loginname>&param2=<...>&param3=<...>` | APK |
+| Switch video camera | `test?dev_id=<did>&com=D197` | APK |
+| Time sync | `test?dev_id=<did>&com=D280&param1=<tz_value>&param2=<urlencoded time>` | APK |
+
+Fresh location is asynchronous: the app sends `D3`, then polls
+`v2_findLastPosition`. A legacy-live acknowledgement looked like:
+
+```json
+{"dev_id":"...","com":"D3","code":200,"current_utc_time":"..."}
+```
+
+For time sync, `param1` is an app-computed offset-like value that accounts for
+DST, not a raw IANA timezone name. `param2` uses `yyyy-MM-dd HH:mm:ss` before
+URL encoding. An older `D57` builder also exists, but APK `1.1.5` uses `D280`.
+
+Live video monitoring uses additional media/session handling not covered by
+the REST command itself. Some `D196` variants append `param4=2`.
+
+### Chat and attachments
+
+| Operation | Method and path | Endpoint-specific inner parameters | Evidence |
+| --- | --- | --- | --- |
+| Read new chat rows | `POST /app/{sid}/S10APP/findTalkNewInfo` | `user_id`, `did_id`, `did`, `create_time` | Legacy-live, implemented |
+| Send text/file | `POST /app/{sid}/S10APP/addTalkNewInfo` | `did_id`, `did`, `user_id`, `loginname`, `file_type`, `flag`, optional `message`, optional `data` file | Legacy-live; current multipart unverified |
+| Upload audio | `POST /app/{sid}/S10APP/v2_post_audiorecord` | `user_id`, `did_id`, `did`, `imei`, file | APK |
+| Upload photo | `POST /app/{sid}/S10APP/v2_post_photoInfo` | `user_id`, `did_id`, `did`, `imei`, file | APK |
+| Download attachment | `GET /app/{sid}/S10APP/v2_get_file` | `did_id`, `did`, `dev_id`, `filename`, `type` | APK |
+| Direct file download | `GET /app/{sid}/S10APP/v2_file_download` | Stored path and signed fields | APK |
+
+Legacy-live chat observations:
+
+- `findTalkNewInfo` returned rows containing fields such as `id`,
+  `device_info_id`, `file_type`, `path`, and `create_time`.
+- The tested rows were inbound AMR voice messages.
+- Clearing app storage and logging in again returned the same three rows, so
+  the endpoint did not behave like a complete historical paging API.
+- A newly sent app-to-watch text did not appear in a follow-up read, suggesting
+  `findTalkNewInfo` is primarily for inbound watch messages.
+- Text sending worked with `file_type=3`, `flag=1`, and `message=<text>`.
+
+The current `chat-send` CLI still uses the legacy multipart encoding. Treat it
+as unverified until multipart behavior is tested against APK `1.1.5`.
+
+### Photo Wall
+
+| Operation | Method and path | Endpoint-specific inner parameters | Evidence |
+| --- | --- | --- | --- |
+| List photos | `GET /app/{sid}/S10APP/v2_findPictrueDoorInfo` | `did`, `max_id` | Legacy-live, implemented |
+| Download photo | `GET /app/{sid}/S10APP/v2_downloadPictrueDoor` | `did`, `filename` | Legacy-live, implemented |
+
+Legacy-live results contained `id`, `type`, `path`, and `createtime`.
+`v2_downloadPictrueDoor` required the basename, such as
+`2026-04-14-16-49-33.jpg`; sending the full stored path returned HTTP 404.
+
+Still-photo commands `D75` and `D134` trigger capture. The app then refreshes
+the Photo Wall list.
+
+### Lost-device helpers
+
+The APK also uses:
+
+```text
+POST /S10APP/retrieveDeviceInfo
+```
+
+This path does not follow the normal `/app/{sid}/...` shape. Its current host
+selection and encrypted transport behavior have not been revalidated.
+
+| Action | Endpoint-specific fields | Evidence |
+| --- | --- | --- |
+| Play sound | `a=playvoice`, `play_status=1` or `0`, `did`, `did_id` | APK; legacy calls timed out |
+| Nearby photos | `a=photo`, `did`, `did_id` | APK; legacy-live empty response |
+
+The sound dialog sends `play_status=1`, sends `0` when stopped, and
+automatically sends `0` after 60 seconds. Both start and stop timed out during
+the legacy probe, possibly because the server waits for a device-side flow.
+
+The nearby-photo probe returned status `3`, “empty”, when no photos were
+available.
+
+## Implementation status
+
+The shared implementation is under
+[`custom_components/yqt/core/`](custom_components/yqt/core/). The executable
+CLI is [`yqt_client.py`](yqt_client.py).
+
+| Coverage | Commands/features |
+| --- | --- |
+| Implemented with the current standard encrypted transport | `login`, `devices`, `device-list-meta`, `send-order`, `fresh-position`, `last-position`, `last-positions`, `alarms`, `switches`, `photowall-list`, `photowall-download`, `chat-read` |
+| Implemented through legacy multipart; current behavior unverified | `chat-send` |
+| Available through raw `send-order` | Restart and camera/time-sync commands once their parameters are known |
+| Not implemented as dedicated helpers | Audio/photo chat upload, attachment download, sound playback, camera/video helpers, restart, time sync, nearby photos |
+
+The Home Assistant integration is already implemented under
+[`custom_components/yqt`](custom_components/yqt). It polls device metadata and
+last position, and exposes:
+
+- one device per watch
+- a last-position `device_tracker`
+- battery, last-fix, and speed sensors
+- disabled-by-default Wi-Fi and cell-tower diagnostic sensors
+- a stale-location binary sensor
+- a button that sends `D3` and schedules a later refresh
+
+Installation and user-facing feature documentation belongs in
+[`README.md`](README.md), rather than this protocol reference.
+
+## Known gaps and maintenance risks
+
+- Revalidate all legacy-live feature endpoints on the current encrypted
+  transport.
+- Determine whether multipart operations use a separate encryption rule.
+- Extract the MQTT topic and authentication layout before attempting push
+  updates.
+- Confirm the purpose and security requirements of the collection, bind, and
+  extra regional endpoints.
+- Track server-provided `SignFlag` behavior if `KHDIW` stops working.
+- Replace the bundled client identity if the vendor rotates it or before it
+  expires on 2029-05-18.
+- Treat endpoint, key, certificate, and APK-version values as vendor-controlled
+  implementation details that may change without notice.
+
+## Legacy transport summary
+
+APK `1.1.1` used public REST servers centered on:
+
+- primary API `https://<region>.myaqsh.com:8093`
+- collection service `:8082`
+- bind service `:8083` or `:8084`
+- unencrypted MQTT on port `1883`
+- Shenzhen upload fallback on port `10000`
+
+The old primary API accepted directly signed query/form parameters without
+mTLS or the encrypted envelope. On 2026-07-25 it began rejecting that client
+generation with the forced-upgrade status, so these values are retained only
+as historical context.
