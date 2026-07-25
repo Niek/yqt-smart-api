@@ -8,6 +8,7 @@ import unittest
 import custom_components.yqt as yqt
 from custom_components.yqt.const import DOMAIN
 from custom_components.yqt.core.protocol import (
+    REGIONS,
     YQTWatch,
     YQTWatchState,
     build_watch_index,
@@ -15,6 +16,12 @@ from custom_components.yqt.core.protocol import (
     compute_sign,
     DEFAULT_CLIENT_VERSION,
     is_login_timeout_response,
+)
+from custom_components.yqt.core.transport import (
+    CLIENT_CERTIFICATE,
+    create_ssl_context,
+    decrypt_response,
+    encrypt_request,
 )
 
 # Test fixtures use mocked/censored data only. Do not add real account, device, or location data.
@@ -317,6 +324,58 @@ class ApiHelpersTestCase(unittest.TestCase):
         self.assertTrue(is_login_timeout_response({"status": 607, "message": "Login timeout,Please login agian!"}))
         self.assertTrue(is_login_timeout_response({"message": "Login timeout"}))
         self.assertFalse(is_login_timeout_response({"status": 1, "message": "OK"}))
+
+
+class TransportTestCase(unittest.TestCase):
+    def test_regions_match_current_apk_endpoints(self) -> None:
+        for name, region in REGIONS.items():
+            self.assertEqual(region.base_url, f"https://{name}.myaqsh.com:11001")
+            self.assertEqual(region.collection_url, f"https://{name}.myaqsh.com:11002")
+            self.assertEqual(region.bind_url, f"https://{name}.myaqsh.com:11003")
+            self.assertEqual(region.mqtt_url, f"mqtts://{name}.myaqsh.com:8883")
+
+    def test_encrypted_form_round_trip(self) -> None:
+        params = {
+            "language": "enUS",
+            "appid": "aaagg11145",
+            "loginname": "demo@example.com",
+            "flag": "394",
+            "version": DEFAULT_CLIENT_VERSION,
+            "isIPHONE": "1",
+            "timestamppp": "1776250000000",
+            "sign_flag": "KHDIW",
+        }
+
+        encrypted, index = encrypt_request(params, form_encoded=True, index=1)
+        decrypted = decrypt_response(encrypted)
+
+        self.assertEqual(index, 1)
+        self.assertEqual(decrypted["loginname"], "demo%40example.com")
+        self.assertEqual(decrypted["app_flag"], "394")
+        self.assertEqual(
+            decrypted["sign"],
+            compute_sign({**params, "app_flag": "394"}),
+        )
+
+    def test_decrypts_current_api_response(self) -> None:
+        payload = {
+            "encryptData": (
+                "513b5f9b45cd05077d846ecf2c10644907667617e33c3087903fc2d959947c5a"
+                "9fa624a78cb9e0173d0db127fa0a0c0e48347c9fbf44f80af4393820e3c4070"
+                "7790baac1ee10920e77fecd3f4d4e86eb043a4ebc2d9328b1170f5de026304bd"
+                "d410f77d990a9f1bcd21ab2f74d9833ae81bda511f41a4984b9e3369d76212700"
+            ),
+            "encryptIndex": 1,
+        }
+
+        decrypted = decrypt_response(payload)
+
+        self.assertEqual(decrypted["status"], 2)
+        self.assertIn("account is not registered", decrypted["message"])
+
+    def test_client_certificate_loads(self) -> None:
+        self.assertTrue(CLIENT_CERTIFICATE.is_file())
+        self.assertIsNotNone(create_ssl_context())
 
 
 class IntegrationUnloadTestCase(unittest.TestCase):

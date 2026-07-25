@@ -35,9 +35,12 @@ Live validation:
   - `findTalkNewInfo` returned real chat records, including AMR voice-message attachments.
 - On 2026-07-06, a real Europe account confirmed that login now requires
   protocol `version=1.0.2`; `version=1.0.1` returns an "old version" failure.
-- Plain Python probes against latest APK defaults `https://europe.myaqsh.com:11001`,
-  `:11002`, and `:11003` returned HTTP 400 "No required SSL certificate was
-  sent". The Python client therefore still uses the older public REST ports.
+- On 2026-07-25, the old `:8093` login endpoint started returning status `3`,
+  "The current app is unavailable. Please upgrade the app."
+- Plain requests to the APK `1.1.5` `:11001` endpoint returned HTTP 400
+  "No required SSL certificate was sent". A request using both the APK's client
+  certificate and encrypted request envelope returned the normal status `2`
+  response for a fake account. The Python client now uses this current transport.
 - `v2_new_findUserDeviceByDid` returned data on both the public path and the
   APK's session-bound path during live testing.
 
@@ -58,7 +61,7 @@ The app keeps four server values per region:
 - `BIND_URL`: push/bind host
 - `MQTT_SERVER`: MQTT broker
 
-Legacy public REST examples used by the Python client:
+Older public REST examples:
 
 - `europe`
   - `BASE_URL`: `https://europe.myaqsh.com:8093`
@@ -110,8 +113,9 @@ The Shenzhen fallback in the latest APK is:
 - `mqtts://sz.myaqsh.com:8883`
 - extra endpoint `https://sz.myaqsh.com:18000`
 
-Do not blindly move the Python client to the `11001`/`11002`/`11003` endpoints:
-those currently appear to require a client TLS certificate.
+The current `11001`/`11002`/`11003` endpoints require the APK's client TLS
+certificate. The REST API additionally requires the APK's encrypted request
+envelope; mTLS with the old form body still returns the forced-upgrade response.
 
 ### 2. Session handling
 
@@ -160,6 +164,11 @@ SECRPRO + key1 + value1 + key2 + value2 + ... + SECRPRO
 ```text
 sign = sha256(md5(md5(md5(built_string)))).lower()
 ```
+
+APK `1.1.5` adds `app_flag=394` before computing this signature. It then
+AES-CBC encrypts the signed parameters with one of five embedded key/IV pairs,
+hex-encodes the ciphertext, and sends `encryptIndex` plus `encryptData` with an
+`X-Encrypt-Index` header. API responses use the same encrypted envelope.
 
 In APK `1.1.5`, the app no longer broadly hardcodes `KHDIW` in wrapper methods.
 It stores a runtime server-provided `SignFlag` into `Lm7/c.a` and passes that

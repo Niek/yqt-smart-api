@@ -29,6 +29,12 @@ from .protocol import (
     split_dids,
     watches_to_rows,
 )
+from .transport import (
+    ENCRYPT_INDEX_HEADER,
+    create_ssl_context,
+    decrypt_response,
+    encrypt_request,
+)
 
 
 class YQTClient:
@@ -61,7 +67,10 @@ class YQTClient:
         self._device_index: dict[str, dict[str, Any]] = {}
 
         self.cookie_jar = http.cookiejar.CookieJar()
-        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookie_jar))
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self.cookie_jar),
+            urllib.request.HTTPSHandler(context=create_ssl_context()),
+        )
 
     def login(self, loginname: str, password: str) -> dict[str, Any]:
         payload = self._signed_params(
@@ -497,14 +506,23 @@ class YQTClient:
 
     def _request_json(self, method: str, path: str, params: dict[str, str]) -> dict[str, Any]:
         url = urllib.parse.urljoin(f"{self.region.base_url}/", path.lstrip("/"))
-        headers = {"Accept": "application/json"}
+        encrypted, index = encrypt_request(params, form_encoded=method == "POST")
+        headers = {
+            "Accept": "application/json",
+            ENCRYPT_INDEX_HEADER: str(index),
+        }
 
         if method == "GET":
-            query = urllib.parse.urlencode(params)
+            query = urllib.parse.urlencode(
+                {
+                    "encryptData": encrypted["encryptData"],
+                    "encryptIndex": encrypted["encryptIndex"],
+                }
+            )
             request = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
         elif method == "POST":
-            body = urllib.parse.urlencode(params).encode("utf-8")
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            body = json.dumps(encrypted, separators=(",", ":")).encode()
+            headers["Content-Type"] = "application/json; charset=utf-8"
             request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         else:
             raise ValueError(f"unsupported method {method!r}")
@@ -517,9 +535,12 @@ class YQTClient:
             raise YQTHTTPError(exc.code, body) from exc
 
         try:
-            return json.loads(raw)
+            payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise YQTError(f"server did not return JSON: {raw[:500]}") from exc
+        if not isinstance(payload, dict):
+            raise YQTError("server returned a non-object JSON payload")
+        return decrypt_response(payload)
 
     def _request_json_multipart(
         self,
@@ -580,14 +601,23 @@ class YQTClient:
 
     def _request_bytes(self, method: str, path: str, params: dict[str, str], *, accept: str = "*/*") -> bytes:
         url = urllib.parse.urljoin(f"{self.region.base_url}/", path.lstrip("/"))
-        headers = {"Accept": accept}
+        encrypted, index = encrypt_request(params, form_encoded=method == "POST")
+        headers = {
+            "Accept": accept,
+            ENCRYPT_INDEX_HEADER: str(index),
+        }
 
         if method == "GET":
-            query = urllib.parse.urlencode(params)
+            query = urllib.parse.urlencode(
+                {
+                    "encryptData": encrypted["encryptData"],
+                    "encryptIndex": encrypted["encryptIndex"],
+                }
+            )
             request = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
         elif method == "POST":
-            body = urllib.parse.urlencode(params).encode("utf-8")
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            body = json.dumps(encrypted, separators=(",", ":")).encode()
+            headers["Content-Type"] = "application/json; charset=utf-8"
             request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         else:
             raise ValueError(f"unsupported method {method!r}")
@@ -606,6 +636,7 @@ class YQTClient:
             except json.JSONDecodeError:
                 return raw
             if isinstance(payload, dict):
+                payload = decrypt_response(payload)
                 status = payload.get("status")
                 code = payload.get("code")
                 message = str(payload.get("message", payload.get("msg", "unexpected JSON response")))

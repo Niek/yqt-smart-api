@@ -23,24 +23,24 @@ Confirmed examples:
 
 ## Standalone Client
 
-The CLI entry point is:
+With [uv](https://docs.astral.sh/uv/) installed, run the client directly:
 
 ```bash
-python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD login
+./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD login
 ```
 
 Useful smoke tests:
 
 ```bash
-python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD devices
-python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD last-position --did YOUR_DEVICE_ID
-python3 yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD fresh-position --did YOUR_DEVICE_ID
+./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD devices
+./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD last-position --did YOUR_DEVICE_ID
+./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD fresh-position --did YOUR_DEVICE_ID
 ```
 
 If you want to see the available commands:
 
 ```bash
-python3 yqt_client.py --help
+./yqt_client.py --help
 ```
 
 ## Home Assistant
