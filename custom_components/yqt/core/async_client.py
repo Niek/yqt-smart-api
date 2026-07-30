@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -58,7 +59,7 @@ class YQTApiClient:
         self.password = password
         self.language = language
         self.request_timeout = request_timeout
-        self.ssl_context = create_ssl_context()
+        self.ssl_context = None
 
         self.session_id: str | None = None
         self.user_id: int | None = None
@@ -275,6 +276,11 @@ class YQTApiClient:
         data: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         url = urljoin(f"{self.region.base_url}/", path.lstrip("/"))
+        if self.ssl_context is None:
+            self.ssl_context = await asyncio.get_running_loop().run_in_executor(
+                None,
+                create_ssl_context,
+            )
         request_params = None
         request_data = None
         encrypted, index = encrypt_request(

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
-import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import custom_components.yqt as yqt
 from custom_components.yqt.const import DOMAIN
+from custom_components.yqt.core.async_client import YQTApiClient
 from custom_components.yqt.core.protocol import (
     REGIONS,
     YQTWatch,
@@ -376,6 +379,38 @@ class TransportTestCase(unittest.TestCase):
     def test_client_certificate_loads(self) -> None:
         self.assertTrue(CLIENT_CERTIFICATE.is_file())
         self.assertIsNotNone(create_ssl_context())
+
+
+class AsyncClientTransportTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_ssl_context_is_created_off_event_loop(self) -> None:
+        context = object()
+        context_threads: list[int] = []
+
+        def create_context():
+            context_threads.append(threading.get_ident())
+            return context
+
+        session = MagicMock()
+        response = session.request.return_value.__aenter__.return_value
+        response.status = 200
+        response.text = AsyncMock(return_value='{"status":1}')
+        with patch(
+            "custom_components.yqt.core.async_client.create_ssl_context",
+            new=create_context,
+        ):
+            client = YQTApiClient(
+                session,
+                region="europe",
+                loginname="demo@example.com",
+                password="password",
+            )
+            self.assertEqual(context_threads, [])
+            payload = await client._request_json("GET", "/test", params={})
+
+        self.assertEqual(payload, {"status": 1})
+        self.assertEqual(len(context_threads), 1)
+        self.assertNotEqual(context_threads[0], threading.get_ident())
+        self.assertIs(session.request.call_args.kwargs["ssl"], context)
 
 
 class IntegrationUnloadTestCase(unittest.TestCase):
