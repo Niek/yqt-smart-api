@@ -426,18 +426,15 @@ class TransportTestCase(unittest.TestCase):
 class AsyncClientTransportTestCase(unittest.IsolatedAsyncioTestCase):
     def test_command_status_601_is_described_as_offline(self) -> None:
         for client in (YQTApiClient, YQTClient):
-            for payload in ({"code": 601}, {"status": 601}):
+            for key in ("code", "status"):
                 with (
-                    self.subTest(client=client.__name__, payload=payload),
-                    self.assertRaises(YQTResponseError) as raised,
+                    self.subTest(client=client.__name__, key=key),
+                    self.assertRaisesRegex(
+                        YQTResponseError,
+                        "status=601: Device is offline",
+                    ),
                 ):
-                    client._ensure_command_success(payload)
-
-                self.assertEqual(raised.exception.status, 601)
-                self.assertEqual(
-                    raised.exception.message,
-                    "Device is offline. Check coverage or settings.",
-                )
+                    client._ensure_command_success({key: 601})
 
     async def test_ssl_context_is_created_off_event_loop(self) -> None:
         context = object()

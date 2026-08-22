@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from .protocol import (
-    COMMAND_ERROR_MESSAGES,
     DEFAULT_APP_ID,
     DEFAULT_CLIENT_FLAG,
     DEFAULT_CLIENT_VERSION,
+    DEVICE_OFFLINE_MESSAGE,
+    DEVICE_OFFLINE_STATUS,
     DEFAULT_IS_IPHONE,
     DEFAULT_LANGUAGE,
     DEFAULT_SIGN_FLAG,
@@ -24,7 +25,6 @@ from .protocol import (
     YQTHTTPError,
     YQTResponseError,
     build_watch_index,
-    coerce_int,
     compute_sign,
     hash_password,
     photo_wall_filename,
@@ -656,28 +656,21 @@ class YQTClient:
 
     @staticmethod
     def _ensure_command_success(payload: dict[str, Any]) -> None:
-        code = coerce_int(payload.get("code"))
+        code = payload.get("code")
         if code == 200:
             return
-        status = coerce_int(payload.get("status"))
-        if status in SUCCESS_STATUSES:
+        status = payload.get("status")
+        if isinstance(status, int):
+            YQTClient._ensure_success(payload)
             return
-
-        error_status = code if code is not None else status
-        message = str(
-            payload.get(
-                "message",
-                payload.get(
-                    "msg",
-                    COMMAND_ERROR_MESSAGES.get(error_status, "unknown command response"),
-                ),
-            )
-        )
-        raise YQTResponseError(error_status, message, payload)
+        fallback = DEVICE_OFFLINE_MESSAGE if code == DEVICE_OFFLINE_STATUS else "unknown command response"
+        message = str(payload.get("message", payload.get("msg", fallback)))
+        raise YQTResponseError(code if isinstance(code, int) else None, message, payload)
 
     @staticmethod
     def _ensure_status(payload: dict[str, Any], allowed_statuses: set[int]) -> None:
         status = payload.get("status")
         if status not in allowed_statuses:
-            message = str(payload.get("message", "unknown server response"))
+            fallback = DEVICE_OFFLINE_MESSAGE if status == DEVICE_OFFLINE_STATUS else "unknown server response"
+            message = str(payload.get("message", payload.get("msg", fallback)))
             raise YQTResponseError(status if isinstance(status, int) else None, message, payload)
