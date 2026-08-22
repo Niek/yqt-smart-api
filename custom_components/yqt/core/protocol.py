@@ -424,6 +424,17 @@ def build_watch_state(
     latitude = coerce_float(first_row.get("lat"))
     longitude = coerce_float(first_row.get("lng"))
 
+    if abs(coerce_int(first_row.get("datatype")) or 0) == 3:
+        corrected_latitude = coerce_float(first_row.get("lat_co"))
+        corrected_longitude = coerce_float(first_row.get("lng_co"))
+        if (
+            corrected_latitude is not None
+            and corrected_longitude is not None
+            and (corrected_latitude != 0 or corrected_longitude != 0)
+        ):
+            latitude = corrected_latitude
+            longitude = corrected_longitude
+
     if latitude == 0 and longitude == 0:
         if previous is not None:
             return replace(
