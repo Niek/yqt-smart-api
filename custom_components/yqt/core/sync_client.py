@@ -14,6 +14,8 @@ from .protocol import (
     DEFAULT_APP_ID,
     DEFAULT_CLIENT_FLAG,
     DEFAULT_CLIENT_VERSION,
+    DEVICE_OFFLINE_MESSAGE,
+    DEVICE_OFFLINE_STATUS,
     DEFAULT_IS_IPHONE,
     DEFAULT_LANGUAGE,
     DEFAULT_SIGN_FLAG,
@@ -657,15 +659,18 @@ class YQTClient:
         code = payload.get("code")
         if code == 200:
             return
-        if isinstance(payload.get("status"), int):
+        status = payload.get("status")
+        if isinstance(status, int):
             YQTClient._ensure_success(payload)
             return
-        message = str(payload.get("message", payload.get("msg", "unknown command response")))
+        fallback = DEVICE_OFFLINE_MESSAGE if code == DEVICE_OFFLINE_STATUS else "unknown command response"
+        message = str(payload.get("message", payload.get("msg", fallback)))
         raise YQTResponseError(code if isinstance(code, int) else None, message, payload)
 
     @staticmethod
     def _ensure_status(payload: dict[str, Any], allowed_statuses: set[int]) -> None:
         status = payload.get("status")
         if status not in allowed_statuses:
-            message = str(payload.get("message", "unknown server response"))
+            fallback = DEVICE_OFFLINE_MESSAGE if status == DEVICE_OFFLINE_STATUS else "unknown server response"
+            message = str(payload.get("message", payload.get("msg", fallback)))
             raise YQTResponseError(status if isinstance(status, int) else None, message, payload)

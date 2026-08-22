@@ -15,6 +15,8 @@ DEFAULT_IS_IPHONE = 1
 DEFAULT_SIGN_FLAG = "KHDIW"
 SIGN_PREFIX = "SECRPRO"
 SUCCESS_STATUSES = {1, 4}
+DEVICE_OFFLINE_STATUS = 601
+DEVICE_OFFLINE_MESSAGE = "Device is offline. Check coverage or settings."
 DEVICE_META_KEYS = (
     "didstr",
     "didrole",

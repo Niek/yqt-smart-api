@@ -12,6 +12,8 @@ from .protocol import (
     DEFAULT_APP_ID,
     DEFAULT_CLIENT_FLAG,
     DEFAULT_CLIENT_VERSION,
+    DEVICE_OFFLINE_MESSAGE,
+    DEVICE_OFFLINE_STATUS,
     DEFAULT_IS_IPHONE,
     DEFAULT_LANGUAGE,
     DEFAULT_SIGN_FLAG,
@@ -343,8 +345,14 @@ class YQTApiClient:
         if status in SUCCESS_STATUSES:
             return
 
-        message = str(payload.get("message", payload.get("msg", "unexpected command response")))
-        raise YQTResponseError(code if code is not None else status, message, payload)
+        error_status = code if code is not None else status
+        fallback = (
+            DEVICE_OFFLINE_MESSAGE
+            if error_status == DEVICE_OFFLINE_STATUS
+            else "unexpected command response"
+        )
+        message = str(payload.get("message", payload.get("msg", fallback)))
+        raise YQTResponseError(error_status, message, payload)
 
     @staticmethod
     def _ensure_login_success(payload: dict[str, Any]) -> None:
