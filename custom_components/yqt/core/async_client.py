@@ -38,6 +38,11 @@ from .transport import (
 )
 
 
+COMMAND_ERROR_MESSAGES = {
+    601: "Device is offline. Check coverage or settings.",
+}
+
+
 class YQTApiClient:
     def __init__(
         self,
@@ -343,8 +348,17 @@ class YQTApiClient:
         if status in SUCCESS_STATUSES:
             return
 
-        message = str(payload.get("message", payload.get("msg", "unexpected command response")))
-        raise YQTResponseError(code if code is not None else status, message, payload)
+        error_status = code if code is not None else status
+        message = str(
+            payload.get(
+                "message",
+                payload.get(
+                    "msg",
+                    COMMAND_ERROR_MESSAGES.get(error_status, "unexpected command response"),
+                ),
+            )
+        )
+        raise YQTResponseError(error_status, message, payload)
 
     @staticmethod
     def _ensure_login_success(payload: dict[str, Any]) -> None:

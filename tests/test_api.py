@@ -12,6 +12,7 @@ from custom_components.yqt.const import DOMAIN
 from custom_components.yqt.core.async_client import YQTApiClient
 from custom_components.yqt.core.protocol import (
     REGIONS,
+    YQTResponseError,
     YQTWatch,
     YQTWatchState,
     build_watch_index,
@@ -422,6 +423,20 @@ class TransportTestCase(unittest.TestCase):
 
 
 class AsyncClientTransportTestCase(unittest.IsolatedAsyncioTestCase):
+    def test_command_status_601_is_described_as_offline(self) -> None:
+        for payload in ({"code": 601}, {"status": 601}):
+            with (
+                self.subTest(payload=payload),
+                self.assertRaises(YQTResponseError) as raised,
+            ):
+                YQTApiClient._ensure_command_success(payload)
+
+            self.assertEqual(raised.exception.status, 601)
+            self.assertEqual(
+                raised.exception.message,
+                "Device is offline. Check coverage or settings.",
+            )
+
     async def test_ssl_context_is_created_off_event_loop(self) -> None:
         context = object()
         context_threads: list[int] = []
