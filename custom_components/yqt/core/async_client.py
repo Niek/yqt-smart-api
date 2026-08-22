@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .protocol import (
+    COMMAND_ERROR_MESSAGES,
     DEFAULT_APP_ID,
     DEFAULT_CLIENT_FLAG,
     DEFAULT_CLIENT_VERSION,
@@ -36,11 +37,6 @@ from .transport import (
     decrypt_response,
     encrypt_request,
 )
-
-
-COMMAND_ERROR_MESSAGES = {
-    601: "Device is offline. Check coverage or settings.",
-}
 
 
 class YQTApiClient:

@@ -21,6 +21,7 @@ from custom_components.yqt.core.protocol import (
     DEFAULT_CLIENT_VERSION,
     is_login_timeout_response,
 )
+from custom_components.yqt.core.sync_client import YQTClient
 from custom_components.yqt.core.transport import (
     CLIENT_CERTIFICATE,
     create_ssl_context,
@@ -424,18 +425,19 @@ class TransportTestCase(unittest.TestCase):
 
 class AsyncClientTransportTestCase(unittest.IsolatedAsyncioTestCase):
     def test_command_status_601_is_described_as_offline(self) -> None:
-        for payload in ({"code": 601}, {"status": 601}):
-            with (
-                self.subTest(payload=payload),
-                self.assertRaises(YQTResponseError) as raised,
-            ):
-                YQTApiClient._ensure_command_success(payload)
+        for client in (YQTApiClient, YQTClient):
+            for payload in ({"code": 601}, {"status": 601}):
+                with (
+                    self.subTest(client=client.__name__, payload=payload),
+                    self.assertRaises(YQTResponseError) as raised,
+                ):
+                    client._ensure_command_success(payload)
 
-            self.assertEqual(raised.exception.status, 601)
-            self.assertEqual(
-                raised.exception.message,
-                "Device is offline. Check coverage or settings.",
-            )
+                self.assertEqual(raised.exception.status, 601)
+                self.assertEqual(
+                    raised.exception.message,
+                    "Device is offline. Check coverage or settings.",
+                )
 
     async def test_ssl_context_is_created_off_event_loop(self) -> None:
         context = object()

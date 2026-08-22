@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .protocol import (
+    COMMAND_ERROR_MESSAGES,
     DEFAULT_APP_ID,
     DEFAULT_CLIENT_FLAG,
     DEFAULT_CLIENT_VERSION,
@@ -23,6 +24,7 @@ from .protocol import (
     YQTHTTPError,
     YQTResponseError,
     build_watch_index,
+    coerce_int,
     compute_sign,
     hash_password,
     photo_wall_filename,
@@ -654,14 +656,24 @@ class YQTClient:
 
     @staticmethod
     def _ensure_command_success(payload: dict[str, Any]) -> None:
-        code = payload.get("code")
+        code = coerce_int(payload.get("code"))
         if code == 200:
             return
-        if isinstance(payload.get("status"), int):
-            YQTClient._ensure_success(payload)
+        status = coerce_int(payload.get("status"))
+        if status in SUCCESS_STATUSES:
             return
-        message = str(payload.get("message", payload.get("msg", "unknown command response")))
-        raise YQTResponseError(code if isinstance(code, int) else None, message, payload)
+
+        error_status = code if code is not None else status
+        message = str(
+            payload.get(
+                "message",
+                payload.get(
+                    "msg",
+                    COMMAND_ERROR_MESSAGES.get(error_status, "unknown command response"),
+                ),
+            )
+        )
+        raise YQTResponseError(error_status, message, payload)
 
     @staticmethod
     def _ensure_status(payload: dict[str, Any], allowed_statuses: set[int]) -> None:

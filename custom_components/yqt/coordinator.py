@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.components import persistent_notification
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later
@@ -9,7 +10,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DOMAIN, POLL_INTERVAL, REQUEST_LOCATION_REFRESH_DELAY
 from .core.async_client import YQTApiClient
-from .core.protocol import YQTAuthError, YQTError, YQTWatchState
+from .core.protocol import (
+    DEVICE_OFFLINE_STATUS,
+    YQTAuthError,
+    YQTError,
+    YQTResponseError,
+    YQTWatchState,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,9 +45,23 @@ class YQTDataUpdateCoordinator(DataUpdateCoordinator[dict[str, YQTWatchState]]):
             await self.client.async_request_location(did)
         except YQTAuthError as exc:
             raise ConfigEntryAuthFailed(str(exc)) from exc
+        except YQTResponseError as exc:
+            if exc.status == DEVICE_OFFLINE_STATUS:
+                state = self.data.get(did) if self.data else None
+                name = state.watch.name if state else did
+                persistent_notification.async_create(
+                    self.hass,
+                    f"The location request for {name} could not be delivered. "
+                    "Check the device's coverage or settings.",
+                    title=f"{name} is offline",
+                    notification_id=f"{DOMAIN}_{did}_offline",
+                )
+                return
+            raise UpdateFailed(str(exc)) from exc
         except YQTError as exc:
             raise UpdateFailed(str(exc)) from exc
 
+        persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_{did}_offline")
         self._async_schedule_delayed_refresh()
 
     @callback
