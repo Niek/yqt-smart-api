@@ -116,6 +116,46 @@ class ApiHelpersTestCase(unittest.TestCase):
         self.assertEqual(current.latitude, previous.latitude)
         self.assertEqual(current.longitude, previous.longitude)
 
+    def test_build_watch_state_uses_corrected_wifi_position(self) -> None:
+        current = build_watch_state(
+            make_watch(),
+            {
+                "status": 1,
+                "data": [
+                    {
+                        "datatype": "3",
+                        "lat": "50.0",
+                        "lng": "5.0",
+                        "lat_co": "50.1",
+                        "lng_co": "5.1",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(current.latitude, 50.1)
+        self.assertEqual(current.longitude, 5.1)
+
+    def test_build_watch_state_falls_back_from_invalid_wifi_correction(self) -> None:
+        current = build_watch_state(
+            make_watch(),
+            {
+                "status": 1,
+                "data": [
+                    {
+                        "datatype": "3",
+                        "lat": "50.0",
+                        "lng": "5.0",
+                        "lat_co": "0",
+                        "lng_co": "0",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(current.latitude, 50.0)
+        self.assertEqual(current.longitude, 5.0)
+
     def test_build_watch_state_keeps_previous_location_metadata_on_zero_zero_position(self) -> None:
         watch = make_watch()
         previous = YQTWatchState(
