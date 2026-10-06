@@ -1,17 +1,12 @@
-# YQT Smart Reverse Engineering
+# YQT Smart
 
-This repository is an unofficial reverse-engineering project for YQT kid watches and related white-label apps such as YQT Smart, SeTracker, SeTracker 2, and CarePro+.
+Unofficial Home Assistant integration and Python client for GPS kids' smartwatches that use the YQT Smart cloud. The same backend powers white-label apps such as SeTracker, SeTracker 2 and CarePro+, so watches paired with those apps should work too.
 
-It currently contains two practical outputs:
+Log in with the same account you use in the phone app. API details are documented in [`REVERSE_ENGINEERING.md`](REVERSE_ENGINEERING.md).
 
-- a standalone Python client for probing the backend and testing commands
-- a Home Assistant custom integration under `custom_components/yqt`
+## Compatible watches
 
-For protocol notes and endpoint findings, see `REVERSE_ENGINEERING.md`.
-
-## Compatible Smart Watches
-
-Confirmed examples:
+Confirmed working:
 
 - FREEBOT `T53` ([Amazon](https://www.amazon.com/FREEBOT-Parental-Controls-Emergency-Birthday/dp/B0DRBPY8QC?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
 - PTHTECHUS `PTH-G4-S02` ([Amazon](https://www.amazon.com/dp/B09198QYX8?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
@@ -22,15 +17,34 @@ Confirmed examples:
 - `GTQ68NO` ([montre-enfant.com](https://www.montre-enfant.com/produit/traceur-gps-enfant-4g-avec-bouton-d-appel-sos-modele-gtq68no))
 - Garett Kids `Vibe AI 4G` ([garett.com.pl](https://garett.com.pl/produkt/smartwatch-garett-kids-vibe-ai-4g-czarny/))
 
-## Standalone Client
+## Home Assistant
 
-With [uv](https://docs.astral.sh/uv/) installed, run the client directly:
+### Install via HACS
 
-```bash
-./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD login
-```
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
 
-Useful smoke tests:
+1. Add this repository to HACS as a custom repository (category `Integration`).
+2. Install `YQT Smart` and restart Home Assistant.
+
+### Install manually
+
+Copy `custom_components/yqt` into your Home Assistant `custom_components` directory and restart.
+
+### Setup
+
+Go to **Settings → Devices & services → Add integration**, search for `YQT Smart`, and enter your region, account and password.
+
+Each watch becomes a device with:
+
+- a `device_tracker` with the last known position
+- battery, last-fix and speed sensors
+- a stale-location binary sensor
+- a button to request a fresh location
+- diagnostic sensors for nearby Wi-Fi access points and cell towers (disabled by default)
+
+## Command-line client
+
+With [uv](https://docs.astral.sh/uv/) installed:
 
 ```bash
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD devices
@@ -38,48 +52,8 @@ Useful smoke tests:
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD fresh-position --did YOUR_DEVICE_ID
 ```
 
-If you want to see the available commands:
+Run `./yqt_client.py --help` for all commands. The CLI and integration share the same code in `custom_components/yqt/core/`.
 
-```bash
-./yqt_client.py --help
-```
+## Disclaimer
 
-## Home Assistant
-
-The Home Assistant integration lives in:
-
-```text
-custom_components/yqt
-```
-
-### HACS
-
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
-
-1. In HACS, add this repository as a custom repository with category `Integration`.
-2. Install `YQT Smart`.
-3. Restart Home Assistant.
-
-### Manual
-
-To install it in Home Assistant:
-
-1. Copy `custom_components/yqt` into your HA config directory under `custom_components/yqt`.
-2. Restart Home Assistant.
-3. In Home Assistant, go to `Settings -> Devices & services -> Add integration`.
-4. Search for `YQT Smart`.
-5. Enter your `region`, `account`, and `password`.
-
-The current MVP exposes:
-
-- one device per watch
-- a `device_tracker` with the last known position
-- battery, last-fix, and speed sensors
-- disabled-by-default diagnostic sensors for nearby Wi-Fi access points and cell towers
-- a stale-location binary sensor
-- a button to request a fresh location update
-
-## Notes
-
-- This is unofficial and may break if the vendor changes the backend.
-- The shared protocol logic lives in `custom_components/yqt/core/` and is used by both the CLI and the Home Assistant integration.
+Not affiliated with YQT or any watch vendor. The vendor can change the API at any time, which may break this project.
