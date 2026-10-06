@@ -20,7 +20,7 @@ Confirmed examples:
 - tykjszgs `LT31` ([Amazon](https://www.amazon.com/dp/B0CZ6G69WY?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
 - Wonlex `KT31` ([Wonlex](https://www.iwonlex.net/products/wonlex-4g-amoled-screen-gps-android-8-1-kids-videocall-smartwatch-kt31/))
 - `GTQ68NO` ([montre-enfant.com](https://www.montre-enfant.com/produit/traceur-gps-enfant-4g-avec-bouton-d-appel-sos-modele-gtq68no))
-- GARRETT Kids `Vibe AI 4G` ([garett.com.pl](https://garett.com.pl/produkt/smartwatch-garett-kids-vibe-ai-4g-czarny/))
+- Garett Kids `Vibe AI 4G` ([garett.com.pl](https://garett.com.pl/produkt/smartwatch-garett-kids-vibe-ai-4g-czarny/))
 
 ## Standalone Client
 
