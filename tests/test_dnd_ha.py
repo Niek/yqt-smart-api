@@ -25,7 +25,7 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
         self.hass = HomeAssistant(self.config_dir.name)
         frame.async_setup(self.hass)
         self.addAsyncCleanup(self.hass.async_stop)
-        self.watch = YQTWatch("test-watch", "test-id", "test-model", "Test", "Parent", config="DC:2")
+        self.watch = YQTWatch("test-watch", "test-id", "", "Test", "Parent", config="DC:2")
         self.client = YQTApiClient(MagicMock(), region="europe", loginname="demo@example.com", password="test")
         self.client.session_id = "test-session"
         self.client._watches = {self.watch.did: self.watch}

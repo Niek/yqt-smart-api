@@ -115,13 +115,13 @@ class YQTApiClient:
         return states
 
     async def async_request_location(self, did: str) -> dict[str, Any]:
-        watch = await self._async_ensure_watch(did)
+        watch = await self._async_ensure_watch(did, require_model=True)
         response = await self._async_send_order(
             f"test?dev_id={watch.did}&com=D3&dev_model={watch.model}",
         )
         if is_login_timeout_response(response):
             await self._async_reauthenticate()
-            watch = await self._async_ensure_watch(did)
+            watch = await self._async_ensure_watch(did, require_model=True)
             response = await self._async_send_order(
                 f"test?dev_id={watch.did}&com=D3&dev_model={watch.model}",
             )
@@ -242,7 +242,7 @@ class YQTApiClient:
 
         return await self._request_json("POST", UP_NEW_DND_SET_INFO_PATH, data=self._signed_params(payload))
 
-    async def _async_ensure_watch(self, did: str) -> YQTWatch:
+    async def _async_ensure_watch(self, did: str, *, require_model: bool = False) -> YQTWatch:
         if did not in self._watches or not self.session_id:
             await self.async_login()
         if did not in self._watches and self.user_id is not None:
@@ -252,7 +252,7 @@ class YQTApiClient:
         watch = self._watches.get(did)
         if watch is None:
             raise YQTError(f"unknown watch {did}")
-        if not watch.model:
+        if require_model and not watch.model:
             raise YQTError(f"device model is required for {did}")
         return watch
 

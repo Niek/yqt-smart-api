@@ -729,6 +729,55 @@ class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
         return client
 
+    async def test_settings_read_and_write_do_not_require_a_model(self) -> None:
+        client = self._client()
+        client._watches["9505445780"].model = ""
+        with patch.object(client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request:
+            await client.async_find_set_info("9505445780")
+            self.assertEqual(request.call_args.args, ("GET", f"/app/abc123{FIND_SET_INFO_PATH_SUFFIX}"))
+            self.assertEqual(request.call_args.kwargs["params"]["did_id"], "165923436")
+            await client.async_set_dnd_schedule("9505445780", [])
+            self.assertEqual(request.call_args.args, ("POST", UP_NEW_DND_SET_INFO_PATH))
+            self.assertEqual(request.call_args.kwargs["data"]["did_id"], "165923436")
+
+    async def test_settings_read_retry_does_not_require_a_model(self) -> None:
+        client = self._client()
+
+        async def reauthenticate():
+            client.session_id = "fresh-session"
+            client._watches["9505445780"].model = ""
+
+        with (
+            patch.object(client, "_request_json", new=AsyncMock(side_effect=[
+                {"status": -1, "message": "login timeout"}, {"status": 1}
+            ])) as request,
+            patch.object(client, "_async_reauthenticate", side_effect=reauthenticate) as login,
+        ):
+            await client.async_find_set_info("9505445780")
+        login.assert_awaited_once()
+        self.assertEqual(request.await_count, 2)
+        self.assertEqual(request.call_args.args, ("GET", f"/app/fresh-session{FIND_SET_INFO_PATH_SUFFIX}"))
+
+    async def test_location_requires_a_model_before_initial_send_and_retry(self) -> None:
+        for missing_initially in (True, False):
+            client = self._client()
+            if missing_initially:
+                client._watches["9505445780"].model = ""
+
+            async def reauthenticate():
+                client._watches["9505445780"].model = ""
+
+            with (
+                self.subTest(missing_initially=missing_initially),
+                patch.object(client, "_async_send_order", new=AsyncMock(return_value={
+                    "status": -1, "message": "login timeout"
+                })) as send,
+                patch.object(client, "_async_reauthenticate", side_effect=reauthenticate),
+            ):
+                with self.assertRaisesRegex(YQTError, "device model is required"):
+                    await client.async_request_location("9505445780")
+                self.assertEqual(send.await_count, 0 if missing_initially else 1)
+
     async def test_rejects_unsupported_capability_before_sending(self) -> None:
         client = self._client()
         client._watches["9505445780"].config = "DC:1"
@@ -742,6 +791,7 @@ class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
 
         async def reauthenticate():
             client.session_id = "fresh-session"
+            client._watches["9505445780"].model = ""
 
         with (
             patch.object(client, "_request_json", new=AsyncMock(side_effect=[
