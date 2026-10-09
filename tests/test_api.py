@@ -485,6 +485,31 @@ class ExtractDndPeriodsTestCase(unittest.TestCase):
     def test_empty_slots_are_a_valid_off_schedule(self) -> None:
         self.assertEqual(extract_dnd_periods({"data": [dnd_settings()]}), [DndPeriod.disabled()] * 4)
 
+    def test_empty_or_invalid_disabled_slots_use_apk_defaults(self) -> None:
+        for value in (None, "", "garbage", "00:00-00:00-0111110", DISABLED_DND_PERIOD):
+            for flag in (0, "0", 1, None):
+                with self.subTest(value=value, flag=flag):
+                    fields = dnd_settings(new_dnd1=value, new_dnd1_open=flag)
+                    self.assertEqual(extract_dnd_periods({"data": [fields]}), [DndPeriod.disabled()] * 4)
+
+    def test_non_two_read_flags_preserve_valid_disabled_times(self) -> None:
+        for flag in (0, 1, 3):
+            fields = dnd_settings(new_dnd1="08:00-15:00-0111110", new_dnd1_open=flag)
+            period = extract_dnd_periods({"data": [fields]})[0]
+            self.assertFalse(period.enabled)
+            self.assertEqual(period.to_period_string(), "08:00-15:00-0111110")
+
+    def test_invalid_enabled_defaults_remain_unknown(self) -> None:
+        for value in (None, "", DISABLED_DND_PERIOD, "00:00-00:00-0111110"):
+            fields = dnd_settings(new_dnd1=value, new_dnd1_open=2)
+            with self.subTest(value=value):
+                self.assertIsNone(extract_dnd_periods({"data": [fields]}))
+
+    def test_absent_or_invalid_payloads_remain_unknown(self) -> None:
+        for payload in (None, [], {}, {"data": []}, {"data": [None]}, {"data": "invalid"}):
+            with self.subTest(payload=payload):
+                self.assertIsNone(extract_dnd_periods(payload))
+
     def test_returns_none_when_no_dnd_fields_are_present(self) -> None:
         self.assertIsNone(extract_dnd_periods({"status": 1, "data": {"sos_numbers": []}}))
 
@@ -878,6 +903,41 @@ class IntegrationUnloadTestCase(unittest.TestCase):
         self.assertTrue(coordinator.shutdown_called)
         self.assertFalse(session.close_called)
         self.assertNotIn(entry.entry_id, hass.data[DOMAIN])
+
+
+class DndCliTestCase(unittest.TestCase):
+    def test_omitting_action_fails_before_login(self) -> None:
+        import yqt_client
+
+        with (
+            patch("sys.argv", ["yqt_client.py", "set-dnd", "--did", "test-watch"]),
+            patch("sys.stderr"),
+            patch.object(yqt_client, "YQTClient") as client,
+            self.assertRaises(SystemExit) as error,
+        ):
+            yqt_client.main()
+        self.assertEqual(error.exception.code, 2)
+        client.assert_not_called()
+
+    def test_clear_and_period_are_mutually_exclusive(self) -> None:
+        from yqt_client import _build_parser
+
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            _build_parser().parse_args([
+                "set-dnd", "--did", "test-watch", "--clear", "--period", "08:00-15:00:mon"
+            ])
+
+    def test_explicit_clear_and_periods_parse(self) -> None:
+        from yqt_client import _build_parser
+
+        clear = _build_parser().parse_args(["set-dnd", "--did", "test-watch", "--clear"])
+        self.assertTrue(clear.clear)
+        self.assertEqual(clear.period, [])
+        schedule = _build_parser().parse_args([
+            "set-dnd", "--did", "test-watch", "--period", "08:00-15:00:mon", "--period", "09:00-12:00:sat"
+        ])
+        self.assertFalse(schedule.clear)
+        self.assertEqual(len(schedule.period), 2)
 
 
 if __name__ == "__main__":

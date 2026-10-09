@@ -62,6 +62,10 @@ clock and must be on the same day, with start before end. Only watches
 advertising `DC == 2` are supported. The sensor refreshes after a successful
 write and every 30 minutes.
 
+Device, entity, area and label targets are supported. Updates to multiple
+watches are sequential, not atomic: if a write fails, earlier writes remain
+applied and later watches are not updated.
+
 ## Command-line client
 
 With [uv](https://docs.astral.sh/uv/) installed:
@@ -76,8 +80,9 @@ With [uv](https://docs.astral.sh/uv/) installed:
 
 Run `./yqt_client.py --help` for all commands. The CLI and integration share the same code in `custom_components/yqt/core/`.
 
-`set-dnd` uses the same full-schedule replacement semantics. Omit `--period`
-to clear the schedule; log in to load the watch's capability metadata.
+`set-dnd` uses the same full-schedule replacement semantics. Supply `--period`
+or explicitly use `--clear` to clear the schedule; log in to load the watch's
+capability metadata.
 
 ## Disclaimer
 

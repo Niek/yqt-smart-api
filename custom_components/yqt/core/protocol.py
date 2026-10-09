@@ -258,7 +258,9 @@ class DndPeriod:
 
 
 def extract_dnd_periods(payload: dict[str, Any]) -> list[DndPeriod] | None:
-    """Read all four slots, or return None for an incomplete/invalid schedule."""
+    """Read four slots, tolerating empty disabled defaults but not corrupt enabled slots."""
+    if not isinstance(payload, dict):
+        return None
     source: dict[str, Any] = payload
     data = payload.get("data")
     if isinstance(data, dict):
@@ -268,12 +270,18 @@ def extract_dnd_periods(payload: dict[str, Any]) -> list[DndPeriod] | None:
 
     periods: list[DndPeriod] = []
     for index in range(1, MAX_DND_PERIODS + 1):
-        period_str = source.get(f"new_dnd{index}")
-        open_flag = source.get(f"new_dnd{index}_open")
-        try:
-            periods.append(DndPeriod.from_period_string(str(period_str), str(open_flag)))
-        except ValueError:
+        if f"new_dnd{index}" not in source or f"new_dnd{index}_open" not in source:
             return None
+        period_str = source.get(f"new_dnd{index}")
+        # APK DndActivity1.F8: only 2 is enabled; other flags are disabled.
+        enabled = str(source.get(f"new_dnd{index}_open")) == DND_OPEN_FLAG_ENABLED
+        open_flag = DND_OPEN_FLAG_ENABLED if enabled else DND_OPEN_FLAG_DISABLED
+        try:
+            periods.append(DndPeriod.from_period_string(str(period_str), open_flag))
+        except ValueError:
+            if enabled:
+                return None
+            periods.append(DndPeriod.disabled())
     return periods
 
 

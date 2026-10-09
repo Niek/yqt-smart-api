@@ -278,9 +278,11 @@ APK evidence used for the upstream implementation:
   one weekday; the selector serializes Sunday first. Overnight windows are
   therefore rejected rather than inferred from server acceptance.
 - `SettingResponse` contains a list of settings objects, with four
-  `new_dndN` strings and integer `new_dndN_open` flags. Invalid or incomplete
-  schedules remain unknown, not off. Only DND fields are exposed by the HA
-  sensor; the generic settings response also contains phone numbers.
+  `new_dndN` strings and integer `new_dndN_open` flags. `DndActivity1.F8`
+  treats only flag `2` as enabled and tolerates empty/invalid disabled slots.
+  Readback normalizes those disabled defaults; incomplete payloads and corrupt
+  enabled periods remain unknown. Write validation remains strict. Only DND
+  fields are exposed by the HA sensor; the shared response also contains phone numbers.
 - Retrofit interface `f7.a.L0` and `DndAction.K3` use the root-level POST
   above; `DndAction`'s callback accepts `status=1`. The fork also supplies
   `sid` in the body (not required by the APK's declared fields).

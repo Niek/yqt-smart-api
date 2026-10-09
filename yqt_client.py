@@ -123,16 +123,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     set_dnd_parser.add_argument("--did", required=True)
     set_dnd_parser.add_argument("--did-id", default="")
-    set_dnd_parser.add_argument(
+    dnd_action = set_dnd_parser.add_mutually_exclusive_group(required=True)
+    dnd_action.add_argument(
         "--period",
         action="append",
         default=[],
         metavar="START-END:DAYS",
         help=(
             "e.g. 08:00-15:00:mon,tue,wed,thu,fri. Repeat up to 4 times (one per schedule slot). "
-            "Start must be before end in watch local time. Omit entirely to clear the schedule."
+            "Start must be before end in watch local time."
         ),
     )
+    dnd_action.add_argument("--clear", action="store_true", help="Explicitly clear all DND schedule slots.")
 
     return parser
 

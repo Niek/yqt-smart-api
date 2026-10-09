@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from custom_components.yqt import _async_register_services
+from custom_components.yqt import async_setup, async_unload_entry
 from custom_components.yqt.const import DOMAIN, SERVICE_SET_DND_SCHEDULE
 from custom_components.yqt.core.async_client import YQTApiClient
 from custom_components.yqt.core.protocol import YQTError, YQTWatch, YQTWatchState
@@ -16,8 +16,9 @@ from custom_components.yqt.core.protocol import YQTError, YQTWatch, YQTWatchStat
 @unittest.skipUnless(importlib.util.find_spec("homeassistant"), "Home Assistant not installed")
 class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        from homeassistant.config_entries import ConfigEntry
         from homeassistant.core import HomeAssistant
-        from homeassistant.helpers import frame
+        from homeassistant.helpers import frame, device_registry as dr, entity_registry as er, area_registry as ar, label_registry as lr
         from custom_components.yqt.coordinator import YQTDndSettingsCoordinator
 
         self.config_dir = tempfile.TemporaryDirectory()
@@ -32,21 +33,37 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
         self.main = SimpleNamespace(data={self.watch.did: YQTWatchState(self.watch)})
         self.dnd = YQTDndSettingsCoordinator(self.hass, self.client, self.main)
         self.runtime = {"client": self.client, "coordinator": self.main, "dnd_coordinator": self.dnd}
-        self.hass.data[DOMAIN] = {"test-entry": self.runtime}
-        self.device = SimpleNamespace(identifiers={(DOMAIN, self.watch.did)}, config_entries={"test-entry"})
-        self.registry = MagicMock()
-        self.registry.async_get.return_value = self.device
-        self.registry_patch = patch("homeassistant.helpers.device_registry.async_get", return_value=self.registry)
-        self.registry_patch.start()
-        self.addCleanup(self.registry_patch.stop)
-        _async_register_services(self.hass)
+        self.entry = ConfigEntry(
+            domain=DOMAIN, title="Test", version=1, minor_version=1, data={}, options={},
+            source="user", unique_id=None, discovery_keys={}, subentries_data=None,
+        )
+        self.hass.config_entries = MagicMock()
+        self.hass.config_entries.async_get_entry.return_value = self.entry
+        self.hass.data[DOMAIN] = {self.entry.entry_id: self.runtime}
+        self.hass.data[dr.DATA_REGISTRY] = dr.DeviceRegistry(self.hass)
+        for module in (dr, er, ar, lr):
+            await module.async_load(self.hass, load_empty=True)
+        self.registry = dr.async_get(self.hass)
+        self.entities = er.async_get(self.hass)
+        self.device = self.registry.async_get_or_create(
+            config_entry_id=self.entry.entry_id, config_subentry_id=None,
+            identifiers={(DOMAIN, self.watch.did)},
+        )
+        self.entity = self.entities.async_get_or_create(
+            "sensor", DOMAIN, "test-dnd", device_id=self.device.id,
+            config_entry=self.entry, config_subentry_id=None,
+        )
+        self.area = ar.async_get(self.hass).async_create("School")
+        self.label = lr.async_get(self.hass).async_create("Watches")
+        self.registry.async_update_device(self.device.id, area_id=self.area.id, labels={self.label.label_id})
+        await async_setup(self.hass, {})
 
-    async def call_action(self, **data):
+    async def call_action(self, *, target=None, **data):
         from homeassistant.helpers.service import async_call_from_config
 
         await async_call_from_config(
             self.hass,
-            {"action": f"{DOMAIN}.{SERVICE_SET_DND_SCHEDULE}", "target": {"device_id": "a" * 32}, "data": data},
+            {"action": f"{DOMAIN}.{SERVICE_SET_DND_SCHEDULE}", "target": target if target is not None else {"device_id": self.device.id}, "data": data},
             blocking=True,
         )
 
@@ -64,6 +81,54 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
             await self.call_action(periods=[])
             self.assertTrue(all(request.call_args.kwargs["data"][f"new_dnd{i}_open"] == "1" for i in range(1, 5)))
 
+    async def test_targets_resolve_and_deduplicate_watches(self):
+        targets = (
+            {"entity_id": self.entity.entity_id},
+            {"entity_id": self.entity.id},
+            {"area_id": self.area.id},
+            {"label_id": self.label.label_id},
+            {"device_id": self.device.id, "entity_id": self.entity.entity_id, "area_id": self.area.id},
+        )
+        # Area targeting must ignore unrelated devices in the same area.
+        unrelated = self.registry.async_get_or_create(
+            config_entry_id=self.entry.entry_id, config_subentry_id=None, identifiers={("other", "test")},
+        )
+        self.registry.async_update_device(unrelated.id, area_id=self.area.id)
+        self.entities.async_get_or_create("sensor", "other", "other", device_id=unrelated.id)
+        for target in targets:
+            with (
+                self.subTest(target=target),
+                patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request,
+                patch.object(self.dnd, "async_request_refresh", new_callable=AsyncMock),
+            ):
+                await self.call_action(target=target, periods=[])
+                request.assert_awaited_once()
+                self.assertEqual(request.call_args.kwargs["data"]["did"], self.watch.did)
+
+    async def test_empty_or_non_yqt_targets_cannot_write(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        for target in ({}, {"device_id": "missing"}, {"entity_id": "sensor.missing"}):
+            with self.subTest(target=target), patch.object(self.client, "_request_json", new_callable=AsyncMock) as request:
+                with self.assertRaisesRegex(HomeAssistantError, "No YQT Smart watches"):
+                    await self.call_action(target=target, periods=[])
+                request.assert_not_awaited()
+
+    async def test_action_remains_registered_without_loaded_entries(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        self.main.async_shutdown = MagicMock()
+        self.hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+        self.assertTrue(await async_unload_entry(self.hass, self.entry))
+        self.assertTrue(self.hass.services.has_service(DOMAIN, SERVICE_SET_DND_SCHEDULE))
+        # Setup registers the action even before any config entry has loaded.
+        self.hass.services.async_remove(DOMAIN, SERVICE_SET_DND_SCHEDULE)
+        await async_setup(self.hass, {})
+        with patch.object(self.client, "_request_json", new_callable=AsyncMock) as request:
+            with self.assertRaisesRegex(HomeAssistantError, "No loaded YQT Smart config entry"):
+                await self.call_action(periods=[])
+            request.assert_not_awaited()
+
     async def test_invalid_action_and_failed_write_do_not_refresh(self):
         import voluptuous as vol
         from homeassistant.exceptions import HomeAssistantError
@@ -72,7 +137,8 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(self.client, "_request_json", new_callable=AsyncMock) as request,
             patch.object(self.dnd, "async_request_refresh", new_callable=AsyncMock) as refresh,
         ):
-            for data in ({}, {"periods": ["22:00-07:00:mon"]}, {"periods": ["08:00-15:00:mon"] * 5}):
+            for data in ({}, {"periods": None}, {"periods": ""}, {"periods": "08:00-15:00:mon"},
+                         {"periods": ["22:00-07:00:mon"]}, {"periods": ["08:00-15:00:mon"] * 5}):
                 with self.subTest(data=data), self.assertRaises((vol.Invalid, HomeAssistantError)):
                     await self.call_action(**data)
             request.assert_not_awaited()

@@ -16,6 +16,11 @@ PLATFORMS = (
 )
 
 
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    _async_register_services(hass)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     import aiohttp
 
@@ -48,8 +53,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "dnd_coordinator": dnd_coordinator,
     }
 
-    _async_register_services(hass)
-
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -61,8 +64,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime = hass.data[DOMAIN].pop(entry.entry_id, None)
         if runtime is not None:
             runtime["coordinator"].async_shutdown()
-        if not hass.data[DOMAIN] and hasattr(hass, "services"):
-            hass.services.async_remove(DOMAIN, SERVICE_SET_DND_SCHEDULE)
     return unload_ok
 
 
@@ -76,14 +77,14 @@ def _async_register_services(hass: HomeAssistant) -> None:
         return
 
     import voluptuous as vol
-    from homeassistant.helpers import config_validation as cv, device_registry as dr
+    from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er, service
 
     from .core.protocol import MAX_DND_PERIODS, DndPeriod
 
     service_schema = vol.Schema(
         {
-            vol.Required("device_id"): vol.All(cv.ensure_list, [cv.string], vol.Length(min=1)),
-            vol.Required(ATTR_PERIODS): vol.All(cv.ensure_list, [cv.string], vol.Length(max=MAX_DND_PERIODS)),
+            **cv.TARGET_SERVICE_FIELDS,
+            vol.Required(ATTR_PERIODS): vol.All(list, [cv.string], vol.Length(max=MAX_DND_PERIODS)),
         }
     )
 
@@ -98,18 +99,29 @@ def _async_register_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError(str(exc)) from exc
 
         device_registry = dr.async_get(hass)
-        for device_id in call.data["device_id"]:
+        entity_registry = er.async_get(hass)
+        device_ids = set(cv.ensure_list(call.data.get("device_id")))
+        entity_ids = await service.async_extract_entity_ids(call)
+        if "all" in entity_ids:
+            entity_ids = set(entity_registry.entities)
+        for entity_id in er.async_validate_entity_ids(entity_registry, entity_ids):
+            if (entity := entity_registry.async_get(entity_id)) is not None and entity.device_id:
+                device_ids.add(entity.device_id)
+
+        watches = []
+        for device_id in sorted(device_ids):
             device = device_registry.async_get(device_id)
-            if device is None:
-                raise HomeAssistantError(f"unknown device_id: {device_id}")
+            if device is not None:
+                did = next((identifier[1] for identifier in device.identifiers if identifier[0] == DOMAIN), None)
+                if did is not None:
+                    watches.append((device, did))
+        if not watches:
+            raise HomeAssistantError("No YQT Smart watches matched the target")
 
-            did = next((identifier[1] for identifier in device.identifiers if identifier[0] == DOMAIN), None)
-            if did is None:
-                raise HomeAssistantError(f"device {device_id} is not a YQT Smart watch")
-
+        for device, did in watches:
             runtime = _find_runtime_for_device(hass, device)
             if runtime is None:
-                raise HomeAssistantError(f"no YQT Smart config entry currently owns device {device_id}")
+                raise HomeAssistantError(f"No loaded YQT Smart config entry for watch {did}")
 
             try:
                 await runtime["client"].async_set_dnd_schedule(did, periods)
@@ -127,6 +139,9 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
 
 def _find_runtime_for_device(hass: HomeAssistant, device: Any) -> dict[str, Any] | None:
+    # HA 2026.10 devices have a single owner; retain compatibility with older HA.
+    if (entry_id := getattr(device, "config_entry_id", None)) is not None:
+        return hass.data.get(DOMAIN, {}).get(entry_id)
     for entry_id, runtime in hass.data.get(DOMAIN, {}).items():
         if entry_id in device.config_entries:
             return runtime

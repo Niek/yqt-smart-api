@@ -4,7 +4,7 @@ set_dnd_schedule:
     Replace all Do Not Disturb schedule slots on a supported watch. Omitted
     slots are cleared. Pass an empty periods list to clear the schedule.
   target:
-    device:
+    entity:
       integration: yqt
   fields:
     periods:
