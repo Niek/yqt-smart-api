@@ -6,9 +6,9 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_LOGINNAME, CONF_PASSWORD, CONF_REGION, DEFAULT_REGION, DOMAIN, TITLE
+from .const import CONF_LOGINNAME, CONF_PASSWORD, CONF_REGION, DOMAIN, TITLE
 from .core.async_client import YQTApiClient
-from .core.protocol import REGIONS, YQTAuthError, YQTError
+from .core.protocol import DEFAULT_REGION, REGIONS, YQTAuthError, YQTError
 
 
 def _user_schema(user_input: dict[str, Any] | None = None) -> vol.Schema:

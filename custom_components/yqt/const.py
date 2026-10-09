@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from .core.protocol import DEFAULT_REGION
-
 DOMAIN = "yqt"
 TITLE = "YQT Smart"
 MANUFACTURER = "YQT Smart"
