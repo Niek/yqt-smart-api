@@ -10,8 +10,9 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name != "homeassistant":
         raise
-else:
-    CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+    cv = None
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN) if cv else None
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
