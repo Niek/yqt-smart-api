@@ -273,6 +273,10 @@ def extract_dnd_periods(payload: dict[str, Any]) -> list[DndPeriod] | None:
         if f"new_dnd{index}" not in source or f"new_dnd{index}_open" not in source:
             return None
         period_str = source.get(f"new_dnd{index}")
+        # APK checks the empty-slot sentinel before inspecting the enable flag.
+        if period_str == DISABLED_DND_PERIOD:
+            periods.append(DndPeriod.disabled())
+            continue
         # APK DndActivity1.F8: only 2 is enabled; other flags are disabled.
         enabled = str(source.get(f"new_dnd{index}_open")) == DND_OPEN_FLAG_ENABLED
         open_flag = DND_OPEN_FLAG_ENABLED if enabled else DND_OPEN_FLAG_DISABLED

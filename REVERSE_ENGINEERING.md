@@ -279,7 +279,8 @@ APK evidence used for the upstream implementation:
   therefore rejected rather than inferred from server acceptance.
 - `SettingResponse` contains a list of settings objects, with four
   `new_dndN` strings and integer `new_dndN_open` flags. `DndActivity1.F8`
-  treats only flag `2` as enabled and tolerates empty/invalid disabled slots.
+  checks the empty-slot sentinel before the flag, treats only flag `2` as
+  enabled, and tolerates empty/invalid disabled slots.
   Readback normalizes those disabled defaults; incomplete payloads and corrupt
   enabled periods remain unknown. Write validation remains strict. Only DND
   fields are exposed by the HA sensor; the shared response also contains phone numbers.

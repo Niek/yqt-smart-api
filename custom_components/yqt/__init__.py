@@ -4,6 +4,15 @@ from typing import TYPE_CHECKING, Any
 
 from .const import ATTR_PERIODS, CONF_LOGINNAME, CONF_PASSWORD, CONF_REGION, DOMAIN, SERVICE_SET_DND_SCHEDULE
 
+# The shared core is also imported by the standalone CLI, without Home Assistant.
+try:
+    from homeassistant.helpers import config_validation as cv
+except ModuleNotFoundError as exc:
+    if exc.name != "homeassistant":
+        raise
+else:
+    CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant, ServiceCall
@@ -79,7 +88,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
     import voluptuous as vol
     from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er, service
 
-    from .core.protocol import MAX_DND_PERIODS, DndPeriod
+    from .core.protocol import MAX_DND_PERIODS, DndPeriod, supports_dnd_schedule
 
     service_schema = vol.Schema(
         {
@@ -100,29 +109,45 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
         device_registry = dr.async_get(hass)
         entity_registry = er.async_get(hass)
-        device_ids = set(cv.ensure_list(call.data.get("device_id")))
+        direct_device_ids = set(cv.ensure_list(call.data.get("device_id")))
+        direct_entity_ids = set(er.async_validate_entity_ids(entity_registry, [
+            entity_id for entity_id in cv.ensure_list(call.data.get("entity_id"))
+            if entity_id not in ("all", "none")
+        ]))
+        device_ids = set(direct_device_ids)
         entity_ids = await service.async_extract_entity_ids(call)
-        if "all" in entity_ids:
+        if "all" in cv.ensure_list(call.data.get("entity_id")):
             entity_ids = set(entity_registry.entities)
         for entity_id in er.async_validate_entity_ids(entity_registry, entity_ids):
             if (entity := entity_registry.async_get(entity_id)) is not None and entity.device_id:
                 device_ids.add(entity.device_id)
+                if entity_id in direct_entity_ids:
+                    direct_device_ids.add(entity.device_id)
 
+        # Validate every directly selected watch before sending any writes.
+        # Broad targets may include legacy watches or unloaded accounts.
         watches = []
         for device_id in sorted(device_ids):
             device = device_registry.async_get(device_id)
             if device is not None:
                 did = next((identifier[1] for identifier in device.identifiers if identifier[0] == DOMAIN), None)
-                if did is not None:
-                    watches.append((device, did))
+                if did is None:
+                    continue
+                runtime = _find_runtime_for_device(hass, device)
+                if runtime is None:
+                    if device_id in direct_device_ids:
+                        raise HomeAssistantError(f"No loaded YQT Smart config entry for watch {did}")
+                    continue
+                state = (runtime["coordinator"].data or {}).get(did)
+                if state is None or not supports_dnd_schedule(state.watch.config):
+                    if device_id in direct_device_ids:
+                        raise HomeAssistantError(f"DND schedule writing requires a watch advertising DC:2: {did}")
+                    continue
+                watches.append((runtime, did))
         if not watches:
-            raise HomeAssistantError("No YQT Smart watches matched the target")
+            raise HomeAssistantError("No YQT Smart watches advertising DC:2 matched the target")
 
-        for device, did in watches:
-            runtime = _find_runtime_for_device(hass, device)
-            if runtime is None:
-                raise HomeAssistantError(f"No loaded YQT Smart config entry for watch {did}")
-
+        for runtime, did in watches:
             try:
                 await runtime["client"].async_set_dnd_schedule(did, periods)
             except YQTError as exc:

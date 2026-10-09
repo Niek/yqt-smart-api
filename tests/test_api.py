@@ -500,10 +500,14 @@ class ExtractDndPeriodsTestCase(unittest.TestCase):
             self.assertEqual(period.to_period_string(), "08:00-15:00-0111110")
 
     def test_invalid_enabled_defaults_remain_unknown(self) -> None:
-        for value in (None, "", DISABLED_DND_PERIOD, "00:00-00:00-0111110"):
+        for value in (None, "", "00:00-00:00-0111110"):
             fields = dnd_settings(new_dnd1=value, new_dnd1_open=2)
             with self.subTest(value=value):
                 self.assertIsNone(extract_dnd_periods({"data": [fields]}))
+
+    def test_empty_slot_sentinel_is_empty_even_with_enabled_flag(self) -> None:
+        fields = dnd_settings(new_dnd1_open=2)
+        self.assertEqual(extract_dnd_periods({"data": [fields]}), [DndPeriod.disabled()] * 4)
 
     def test_absent_or_invalid_payloads_remain_unknown(self) -> None:
         for payload in (None, [], {}, {"data": []}, {"data": [None]}, {"data": "invalid"}):

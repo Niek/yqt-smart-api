@@ -62,9 +62,10 @@ clock and must be on the same day, with start before end. Only watches
 advertising `DC == 2` are supported. The sensor refreshes after a successful
 write and every 30 minutes.
 
-Device, entity, area and label targets are supported. Updates to multiple
-watches are sequential, not atomic: if a write fails, earlier writes remain
-applied and later watches are not updated.
+Device, entity, area and label targets are supported. Broad targets skip
+unsupported watches; directly selecting an unsupported watch fails before
+any writes. Updates to supported watches are sequential, not atomic: if a
+write fails, earlier writes remain applied and later watches are not updated.
 
 ## Command-line client
 

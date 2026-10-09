@@ -67,6 +67,71 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
             blocking=True,
         )
 
+    def add_watch(self, did, config):
+        watch = YQTWatch(did, f"{did}-id", "", did, "Parent", config=config)
+        self.main.data[did] = YQTWatchState(watch)
+        self.client._watches[did] = watch
+        device = self.registry.async_get_or_create(
+            config_entry_id=self.entry.entry_id, config_subentry_id=None, identifiers={(DOMAIN, did)},
+        )
+        entity = self.entities.async_get_or_create(
+            "sensor", DOMAIN, did, device_id=device.id, config_entry=self.entry, config_subentry_id=None,
+        )
+        self.registry.async_update_device(device.id, area_id=self.area.id, labels={self.label.label_id})
+        return device, entity
+
+    async def test_broad_targets_skip_legacy_and_unknown_capabilities(self):
+        self.add_watch("legacy", "DC:1")
+        self.add_watch("unknown", "")
+        for target in ({"area_id": self.area.id}, {"label_id": self.label.label_id}, {"entity_id": "all"}):
+            with (
+                self.subTest(target=target),
+                patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request,
+                patch.object(self.dnd, "async_request_refresh", new_callable=AsyncMock),
+            ):
+                await self.call_action(target=target, periods=[])
+                request.assert_awaited_once()
+                self.assertEqual(request.call_args.kwargs["data"]["did"], self.watch.did)
+
+    async def test_direct_unsupported_targets_fail_before_any_write(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        extra, extra_entity = self.add_watch("extra", "DC:1")
+        # Make the first device in the handler's sort order supported, so this
+        # catches writes made before discovering the later unsupported device.
+        devices = sorted([(self.device, self.entity), (extra, extra_entity)], key=lambda item: item[0].id)
+        for (device, _entity), config in zip(devices, ("DC:2", "DC:1")):
+            did = next(value for domain, value in device.identifiers if domain == DOMAIN)
+            self.main.data[did].watch.config = config
+        supported, _ = devices[0]
+        unsupported, unsupported_entity = devices[1]
+        targets = (
+            {"device_id": [supported.id, unsupported.id]},
+            {"area_id": self.area.id, "device_id": unsupported.id},
+            {"label_id": self.label.label_id, "entity_id": unsupported_entity.entity_id},
+            {"area_id": self.area.id, "entity_id": unsupported_entity.id},
+        )
+        for target in targets:
+            with (
+                self.subTest(target=target),
+                patch.object(self.client, "_request_json", new_callable=AsyncMock) as request,
+                patch.object(self.dnd, "async_request_refresh", new_callable=AsyncMock) as refresh,
+            ):
+                with self.assertRaisesRegex(HomeAssistantError, "DC:2"):
+                    await self.call_action(target=target, periods=[])
+                request.assert_not_awaited()
+                refresh.assert_not_awaited()
+
+    async def test_broad_target_without_supported_watches_fails_without_writing(self):
+        from homeassistant.exceptions import HomeAssistantError
+
+        self.watch.config = "DC:1"
+        for target in ({"area_id": self.area.id}, {"label_id": self.label.label_id}):
+            with self.subTest(target=target), patch.object(self.client, "_request_json", new_callable=AsyncMock) as request:
+                with self.assertRaisesRegex(HomeAssistantError, "No YQT Smart watches advertising DC:2"):
+                    await self.call_action(target=target, periods=[])
+                request.assert_not_awaited()
+
     async def test_action_writes_then_refreshes_and_explicitly_clears(self):
         with (
             patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request,
