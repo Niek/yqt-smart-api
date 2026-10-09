@@ -24,6 +24,13 @@ from custom_components.yqt.core.protocol import (
 from custom_components.yqt.core.sync_client import YQTClient
 
 
+def _dnd_period(value: str) -> DndPeriod:
+    try:
+        return DndPeriod.parse(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Probe the YQT SMART HTTP API.")
     parser.add_argument("--region", default="europe", choices=sorted(REGIONS))
@@ -122,7 +129,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="START-END:DAYS",
-        type=DndPeriod.parse,
+        type=_dnd_period,
         help=(
             "e.g. 08:00-15:00:mon,tue,wed,thu,fri. Repeat up to 4 times (one per schedule slot). "
             "Start must be before end in watch local time."

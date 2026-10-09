@@ -64,8 +64,8 @@ write and every 30 minutes.
 
 Device, entity, area and label targets are supported. Unsupported watches
 are skipped; the action fails if no supported watch matches. Updates are
-sequential, not atomic: if a
-write fails, earlier writes remain applied and later watches are not updated.
+sequential, not atomic: if a write fails, earlier writes remain applied and
+later watches are not updated.
 
 ## Command-line client
 

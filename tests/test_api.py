@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import threading
 import unittest
 from datetime import UTC, datetime
@@ -934,6 +935,26 @@ class DndCliTestCase(unittest.TestCase):
             ):
                 yqt_client.main()
             self.assertEqual(error.exception.code, 2)
+            client.assert_not_called()
+
+    def test_invalid_period_reports_reason_before_login(self) -> None:
+        import yqt_client
+
+        for period, reason in (
+            ("22:00-07:00:mon", "overnight periods are not supported"),
+            ("08:00-15:00:funday", "use sun,mon,tue,wed,thu,fri,sat"),
+        ):
+            with (
+                self.subTest(period=period),
+                patch("sys.argv", ["yqt_client.py", "set-dnd", "--did", "test-watch", "--period", period]),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                patch.object(yqt_client, "YQTClient") as client,
+                self.assertRaises(SystemExit) as error,
+            ):
+                yqt_client.main()
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("error: argument --period:", stderr.getvalue())
+            self.assertIn(reason, stderr.getvalue())
             client.assert_not_called()
 
     def test_clear_and_period_are_mutually_exclusive(self) -> None:
