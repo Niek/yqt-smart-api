@@ -23,13 +23,6 @@ from custom_components.yqt.core.protocol import (
 )
 from custom_components.yqt.core.sync_client import YQTClient
 
-def _parse_dnd_period(value: str) -> DndPeriod:
-    """Parse a CLI "--period" value like "08:00-15:00:mon,tue,wed,thu,fri"."""
-    try:
-        return DndPeriod.from_cli_string(value)
-    except ValueError as exc:
-        raise SystemExit(f"invalid --period: {exc}") from exc
-
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Probe the YQT SMART HTTP API.")
@@ -129,6 +122,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="START-END:DAYS",
+        type=DndPeriod.parse,
         help=(
             "e.g. 08:00-15:00:mon,tue,wed,thu,fri. Repeat up to 4 times (one per schedule slot). "
             "Start must be before end in watch local time."
@@ -261,8 +255,7 @@ def main() -> None:
         response = client.find_set_info(did=args.did, did_id=did_id)
     elif args.command == "set-dnd":
         _, did_id = client.resolve_device(args.did, args.did_id)
-        periods = [_parse_dnd_period(value) for value in args.period]
-        response = client.set_dnd_schedule(did=args.did, did_id=did_id, periods=periods)
+        response = client.set_dnd_schedule(did=args.did, did_id=did_id, periods=args.period)
     else:
         raise SystemExit(f"unsupported command: {args.command}")
 

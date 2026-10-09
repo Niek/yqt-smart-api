@@ -18,11 +18,8 @@ from .protocol import (
     DEFAULT_IS_IPHONE,
     DEFAULT_LANGUAGE,
     DEFAULT_SIGN_FLAG,
-    FIND_SET_INFO_PATH_SUFFIX,
-    MAX_DND_PERIODS,
     REGIONS,
     SUCCESS_STATUSES,
-    UP_NEW_DND_SET_INFO_PATH,
     DndPeriod,
     YQTAuthError,
     YQTConnectionError,
@@ -34,6 +31,7 @@ from .protocol import (
     build_watch_state,
     coerce_int,
     compute_sign,
+    dnd_schedule_fields,
     hash_password,
     is_login_timeout_response,
     supports_dnd_schedule,
@@ -206,41 +204,34 @@ class YQTApiClient:
         )
         return await self._request_json(
             "GET",
-            self._session_path(FIND_SET_INFO_PATH_SUFFIX),
+            self._session_path("/S10APP/v2_findSetInfo"),
             params=payload,
         )
 
     async def async_set_dnd_schedule(self, did: str, periods: Sequence[DndPeriod]) -> dict[str, Any]:
         """Replace the DC == 2 schedule, clearing unused slots; retry an expired session once."""
-        if len(periods) > MAX_DND_PERIODS:
-            raise YQTError(f"async_set_dnd_schedule supports at most {MAX_DND_PERIODS} periods, got {len(periods)}")
-        if not self.session_id:
-            raise YQTError("session_id is required; call async_login() first")
-
+        fields = dnd_schedule_fields(periods)
         watch = await self._async_ensure_watch(did)
-        response = await self._async_set_dnd_schedule_once(watch, periods)
+        response = await self._async_set_dnd_schedule_once(watch, fields)
         if is_login_timeout_response(response):
             await self._async_reauthenticate()
             watch = await self._async_ensure_watch(did)
-            response = await self._async_set_dnd_schedule_once(watch, periods)
+            response = await self._async_set_dnd_schedule_once(watch, fields)
         self._ensure_status(response, {1})
         return response
 
-    async def _async_set_dnd_schedule_once(self, watch: YQTWatch, periods: Sequence[DndPeriod]) -> dict[str, Any]:
+    async def _async_set_dnd_schedule_once(self, watch: YQTWatch, fields: dict[str, str]) -> dict[str, Any]:
         if not supports_dnd_schedule(watch.config):
             raise YQTError("DND schedule writing requires a watch advertising DC:2")
-        padded_periods = list(periods) + [DndPeriod.disabled()] * (MAX_DND_PERIODS - len(periods))
         payload: dict[str, Any] = {
             "sid": self.session_id,
             "did": watch.did,
             "did_id": watch.did_id,
             "language": self.language,
+            **fields,
         }
-        for index, period in enumerate(padded_periods, start=1):
-            payload[f"new_dnd{index}"] = period.to_period_string()
-            payload[f"new_dnd{index}_open"] = period.open_flag
 
-        return await self._request_json("POST", UP_NEW_DND_SET_INFO_PATH, data=self._signed_params(payload))
+        return await self._request_json("POST", "/S10APP/upNewDndSetInfo", data=self._signed_params(payload))
 
     async def _async_ensure_watch(self, did: str, *, require_model: bool = False) -> YQTWatch:
         if did not in self._watches or not self.session_id:

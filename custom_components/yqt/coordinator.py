@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from homeassistant.components import persistent_notification
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
@@ -12,7 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DND_POLL_INTERVAL, DOMAIN, POLL_INTERVAL, REQUEST_LOCATION_REFRESH_DELAY
 from .core.async_client import YQTApiClient
 from .core.protocol import DEVICE_OFFLINE_STATUS
-from .core.protocol import YQTAuthError, YQTError, YQTResponseError, YQTWatchState, supports_dnd_schedule
+from .core.protocol import YQTAuthError, YQTError, YQTResponseError, YQTWatchState, DndPeriod, extract_dnd_periods, supports_dnd_schedule
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,7 +79,7 @@ class YQTDataUpdateCoordinator(DataUpdateCoordinator[dict[str, YQTWatchState]]):
         self.hass.async_create_task(self.async_request_refresh())
 
 
-class YQTDndSettingsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
+class YQTDndSettingsCoordinator(DataUpdateCoordinator[dict[str, list[DndPeriod] | None]]):
     """Poll settings independently so failures do not interrupt location updates."""
 
     def __init__(self, hass: HomeAssistant, client: YQTApiClient, main_coordinator: YQTDataUpdateCoordinator) -> None:
@@ -93,13 +92,13 @@ class YQTDndSettingsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]
         self.client = client
         self._main_coordinator = main_coordinator
 
-    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
-        results: dict[str, dict[str, Any]] = {}
+    async def _async_update_data(self) -> dict[str, list[DndPeriod] | None]:
+        results: dict[str, list[DndPeriod] | None] = {}
         for did, state in self._main_coordinator.data.items():
             if not supports_dnd_schedule(state.watch.config):
                 continue
             try:
-                results[did] = await self.client.async_find_set_info(did)
+                results[did] = extract_dnd_periods(await self.client.async_find_set_info(did))
             except YQTAuthError as exc:
                 raise ConfigEntryAuthFailed(str(exc)) from exc
             except YQTError as exc:

@@ -93,34 +93,34 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
                 request.assert_awaited_once()
                 self.assertEqual(request.call_args.kwargs["data"]["did"], self.watch.did)
 
-    async def test_direct_unsupported_targets_fail_before_any_write(self):
-        from homeassistant.exceptions import HomeAssistantError
-
-        extra, extra_entity = self.add_watch("extra", "DC:1")
-        # Make the first device in the handler's sort order supported, so this
-        # catches writes made before discovering the later unsupported device.
-        devices = sorted([(self.device, self.entity), (extra, extra_entity)], key=lambda item: item[0].id)
-        for (device, _entity), config in zip(devices, ("DC:2", "DC:1")):
-            did = next(value for domain, value in device.identifiers if domain == DOMAIN)
-            self.main.data[did].watch.config = config
-        supported, _ = devices[0]
-        unsupported, unsupported_entity = devices[1]
-        targets = (
-            {"device_id": [supported.id, unsupported.id]},
-            {"area_id": self.area.id, "device_id": unsupported.id},
-            {"label_id": self.label.label_id, "entity_id": unsupported_entity.entity_id},
-            {"area_id": self.area.id, "entity_id": unsupported_entity.id},
-        )
-        for target in targets:
+    async def test_broad_targets_include_devices_without_entities(self):
+        self.entities.async_remove(self.entity.entity_id)
+        for target in ({"area_id": self.area.id}, {"label_id": self.label.label_id}):
             with (
                 self.subTest(target=target),
-                patch.object(self.client, "_request_json", new_callable=AsyncMock) as request,
-                patch.object(self.dnd, "async_request_refresh", new_callable=AsyncMock) as refresh,
+                patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request,
+                patch.object(self.dnd, "async_request_refresh", new_callable=AsyncMock),
             ):
-                with self.assertRaisesRegex(HomeAssistantError, "DC:2"):
-                    await self.call_action(target=target, periods=[])
-                request.assert_not_awaited()
-                refresh.assert_not_awaited()
+                await self.call_action(target=target, periods=[])
+                request.assert_awaited_once()
+                self.assertEqual(request.call_args.kwargs["data"]["did"], self.watch.did)
+
+    async def test_mixed_direct_targets_skip_unsupported_watches(self):
+        legacy, legacy_entity = self.add_watch("legacy", "DC:1")
+        for target in (
+            {"device_id": [self.device.id, legacy.id]},
+            {"area_id": self.area.id, "device_id": legacy.id},
+            {"label_id": self.label.label_id, "entity_id": legacy_entity.entity_id},
+            {"area_id": self.area.id, "entity_id": legacy_entity.id},
+        ):
+            with (
+                self.subTest(target=target),
+                patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request,
+                patch.object(self.dnd, "async_request_refresh", new_callable=AsyncMock),
+            ):
+                await self.call_action(target=target, periods=[])
+                request.assert_awaited_once()
+                self.assertEqual(request.call_args.kwargs["data"]["did"], self.watch.did)
 
     async def test_broad_target_without_supported_watches_fails_without_writing(self):
         from homeassistant.exceptions import HomeAssistantError
@@ -190,7 +190,7 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
         self.hass.services.async_remove(DOMAIN, SERVICE_SET_DND_SCHEDULE)
         await async_setup(self.hass, {})
         with patch.object(self.client, "_request_json", new_callable=AsyncMock) as request:
-            with self.assertRaisesRegex(HomeAssistantError, "No loaded YQT Smart config entry"):
+            with self.assertRaisesRegex(HomeAssistantError, "No YQT Smart watches advertising DC:2"):
                 await self.call_action(periods=[])
             request.assert_not_awaited()
 
@@ -225,14 +225,23 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
             fields[f"new_dnd{index}"] = "00:00-00:00-0000000"
             fields[f"new_dnd{index}_open"] = 1
         fields["new_dnd1"] = "08:00-15:00-0111110"
-        self.dnd.data = {self.watch.did: {"status": 1, "data": [fields]}}
+
+        async def refresh_settings():
+            with patch.object(self.client, "async_find_set_info", new=AsyncMock(return_value={"status": 1, "data": [fields]})):
+                self.dnd.data = await self.dnd._async_update_data()
+
+        await refresh_settings()
+        self.assertNotIn("redacted", repr(self.dnd.data))
         sensor = YQTDndSensor(self.dnd, self.main, self.watch.did)
         self.assertEqual(sensor.native_value, "off")
         self.assertEqual(set(sensor.extra_state_attributes), {"periods"})
         self.assertEqual(sensor.extra_state_attributes["periods"][0]["start"], "08:00")
         fields["new_dnd1_open"] = 2
-        self.assertIn("08:00-15:00", sensor.native_value)
+        await refresh_settings()
+        self.assertEqual(sensor.native_value, "08:00-15:00:mon,tue,wed,thu,fri")
+        self.assertEqual(sensor.extra_state_attributes["periods"][0]["weekdays"], ["mon", "tue", "wed", "thu", "fri"])
         fields["new_dnd1"] = "invalid"
+        await refresh_settings()
         self.assertIsNone(sensor.native_value)
         self.assertEqual(sensor.extra_state_attributes, {})
         self.dnd.data = None

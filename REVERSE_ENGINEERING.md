@@ -283,7 +283,9 @@ APK evidence used for the upstream implementation:
   enabled, and tolerates empty/invalid disabled slots.
   Readback normalizes those disabled defaults; incomplete payloads and corrupt
   enabled periods remain unknown. Write validation remains strict. Only DND
-  fields are exposed by the HA sensor; the shared response also contains phone numbers.
+  periods are retained by the HA coordinator and exposed by the sensor; the
+  shared response also contains phone numbers. Empty slots are omitted from
+  readback and padded only when writing.
 - Retrofit interface `f7.a.L0` and `DndAction.K3` use the root-level POST
   above; `DndAction`'s callback accepts `status=1`. The fork also supplies
   `sid` in the body (not required by the APK's declared fields).

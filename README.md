@@ -42,7 +42,7 @@ Each watch becomes a device with:
 - a button to request a fresh location
 - diagnostic sensors for nearby Wi-Fi access points and cell towers (disabled by default)
 - a Do Not Disturb schedule sensor for supported watches (`DC == 2`), with
-  configured periods in its attributes; this is not the current DND state
+  configured periods and weekday names in its attributes; this is not the current DND state
 
 The integration also registers a **`yqt.set_dnd_schedule`** service to write
 the schedule, usable from Developer Tools, scripts, or automations:
@@ -62,9 +62,9 @@ clock and must be on the same day, with start before end. Only watches
 advertising `DC == 2` are supported. The sensor refreshes after a successful
 write and every 30 minutes.
 
-Device, entity, area and label targets are supported. Broad targets skip
-unsupported watches; directly selecting an unsupported watch fails before
-any writes. Updates to supported watches are sequential, not atomic: if a
+Device, entity, area and label targets are supported. Unsupported watches
+are skipped; the action fails if no supported watch matches. Updates are
+sequential, not atomic: if a
 write fails, earlier writes remain applied and later watches are not updated.
 
 ## Command-line client

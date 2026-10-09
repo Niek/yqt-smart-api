@@ -5,6 +5,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import YQTDataUpdateCoordinator
+from .core.protocol import YQTWatch
 
 
 class YQTEntity(CoordinatorEntity[YQTDataUpdateCoordinator]):
@@ -20,15 +21,18 @@ class YQTEntity(CoordinatorEntity[YQTDataUpdateCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
-        watch = self.snapshot.watch
-        return DeviceInfo(
-            identifiers={(DOMAIN, watch.did)},
-            name=watch.name,
-            manufacturer=MANUFACTURER,
-            model=watch.model or None,
-            serial_number=watch.did,
-        )
+        return watch_device_info(self.snapshot.watch)
 
     @property
     def snapshot(self):
         return self.coordinator.data[self._did]
+
+
+def watch_device_info(watch: YQTWatch) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, watch.did)},
+        name=watch.name,
+        manufacturer=MANUFACTURER,
+        model=watch.model or None,
+        serial_number=watch.did,
+    )

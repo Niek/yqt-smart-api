@@ -87,7 +87,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
         return
 
     import voluptuous as vol
-    from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er, service
+    from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er, target
 
     from .core.protocol import MAX_DND_PERIODS, DndPeriod, supports_dnd_schedule
 
@@ -104,51 +104,41 @@ def _async_register_services(hass: HomeAssistant) -> None:
         from .core.protocol import YQTError
 
         try:
-            periods = [DndPeriod.from_cli_string(value) for value in call.data[ATTR_PERIODS]]
+            periods = [DndPeriod.parse(value) for value in call.data[ATTR_PERIODS]]
         except ValueError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
         device_registry = dr.async_get(hass)
         entity_registry = er.async_get(hass)
-        direct_device_ids = set(cv.ensure_list(call.data.get("device_id")))
-        direct_entity_ids = set(er.async_validate_entity_ids(entity_registry, [
-            entity_id for entity_id in cv.ensure_list(call.data.get("entity_id"))
-            if entity_id not in ("all", "none")
-        ]))
-        device_ids = set(direct_device_ids)
-        entity_ids = await service.async_extract_entity_ids(call)
-        if "all" in cv.ensure_list(call.data.get("entity_id")):
-            entity_ids = set(entity_registry.entities)
-        for entity_id in er.async_validate_entity_ids(entity_registry, entity_ids):
-            if (entity := entity_registry.async_get(entity_id)) is not None and entity.device_id:
-                device_ids.add(entity.device_id)
-                if entity_id in direct_entity_ids:
-                    direct_device_ids.add(entity.device_id)
-
-        # Validate every directly selected watch before sending any writes.
-        # Broad targets may include legacy watches or unloaded accounts.
-        watches = []
-        for device_id in sorted(device_ids):
-            device = device_registry.async_get(device_id)
-            if device is not None:
-                did = next((identifier[1] for identifier in device.identifiers if identifier[0] == DOMAIN), None)
-                if did is None:
-                    continue
-                runtime = _find_runtime_for_device(hass, device)
-                if runtime is None:
-                    if device_id in direct_device_ids:
-                        raise HomeAssistantError(f"No loaded YQT Smart config entry for watch {did}")
-                    continue
-                state = (runtime["coordinator"].data or {}).get(did)
-                if state is None or not supports_dnd_schedule(state.watch.config):
-                    if device_id in direct_device_ids:
-                        raise HomeAssistantError(f"DND schedule writing requires a watch advertising DC:2: {did}")
-                    continue
-                watches.append((runtime, did))
+        supported = {
+            did: runtime
+            for runtime in hass.data.get(DOMAIN, {}).values()
+            for did, state in (runtime["coordinator"].data or {}).items()
+            if supports_dnd_schedule(state.watch.config)
+        }
+        selection = target.TargetSelection(call.data)
+        selection.entity_ids = (
+            set(entity_registry.entities) if "all" in selection.entity_ids
+            else set(er.async_validate_entity_ids(entity_registry, selection.entity_ids))
+        )
+        selected = target.async_extract_referenced_entity_ids(hass, selection)
+        device_ids = selected.referenced_devices | {
+            entry.device_id
+            for entity_id in selected.referenced | selected.indirectly_referenced
+            if (entry := entity_registry.async_get(entity_id)) is not None and entry.device_id
+        }
+        watches = sorted({
+            did
+            for device_id in device_ids
+            if (device := device_registry.async_get(device_id)) is not None
+            for domain, did in device.identifiers
+            if domain == DOMAIN and did in supported
+        })
         if not watches:
             raise HomeAssistantError("No YQT Smart watches advertising DC:2 matched the target")
 
-        for runtime, did in watches:
+        for did in watches:
+            runtime = supported[did]
             try:
                 await runtime["client"].async_set_dnd_schedule(did, periods)
             except YQTError as exc:
@@ -162,13 +152,3 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _async_handle_set_dnd_schedule,
         schema=service_schema,
     )
-
-
-def _find_runtime_for_device(hass: HomeAssistant, device: Any) -> dict[str, Any] | None:
-    # HA 2026.10 devices have a single owner; retain compatibility with older HA.
-    if (entry_id := getattr(device, "config_entry_id", None)) is not None:
-        return hass.data.get(DOMAIN, {}).get(entry_id)
-    for entry_id, runtime in hass.data.get(DOMAIN, {}).items():
-        if entry_id in device.config_entries:
-            return runtime
-    return None

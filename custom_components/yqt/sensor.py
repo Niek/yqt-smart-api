@@ -11,12 +11,10 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN
 from .coordinator import YQTDataUpdateCoordinator, YQTDndSettingsCoordinator
-from .core.protocol import DndPeriod, extract_dnd_periods, supports_dnd_schedule
-from .entity import YQTEntity
-
-_WEEKDAY_NAMES = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+from .core.protocol import DndPeriod, supports_dnd_schedule
+from .entity import YQTEntity, watch_device_info
 
 
 async def async_setup_entry(
@@ -124,7 +122,6 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "dnd_schedule"
     _attr_icon = "mdi:bell-sleep"
-    _attr_entity_registry_enabled_default = True
 
     def __init__(
         self,
@@ -143,24 +140,14 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        watch = self._main_coordinator.data[self._did].watch
-        return DeviceInfo(
-            identifiers={(DOMAIN, watch.did)},
-            name=watch.name,
-            manufacturer=MANUFACTURER,
-            model=watch.model or None,
-            serial_number=watch.did,
-        )
+        return watch_device_info(self._main_coordinator.data[self._did].watch)
 
     @property
     def native_value(self) -> str | None:
         periods = self._periods()
         if periods is None:
             return None
-        active = [period for period in periods if period.enabled]
-        if not active:
-            return "off"
-        return "; ".join(self._describe(period) for period in active)
+        return "; ".join(str(period) for period in periods if period.enabled) or "off"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -171,7 +158,7 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
                 {
                     "start": period.start,
                     "end": period.end,
-                    "weekdays": sorted(period.weekdays),
+                    "weekdays": period.weekday_names,
                     "enabled": period.enabled,
                 }
                 for period in periods
@@ -179,12 +166,4 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
         return attributes
 
     def _periods(self) -> list[DndPeriod] | None:
-        raw = (self.coordinator.data or {}).get(self._did)
-        if raw is None:
-            return None
-        return extract_dnd_periods(raw)
-
-    @staticmethod
-    def _describe(period: DndPeriod) -> str:
-        days = ",".join(_WEEKDAY_NAMES[day] for day in sorted(period.weekdays))
-        return f"{period.start}-{period.end} ({days})"
+        return (self.coordinator.data or {}).get(self._did)

@@ -20,17 +20,15 @@ from .protocol import (
     DEFAULT_IS_IPHONE,
     DEFAULT_LANGUAGE,
     DEFAULT_SIGN_FLAG,
-    FIND_SET_INFO_PATH_SUFFIX,
-    MAX_DND_PERIODS,
     REGIONS,
     SUCCESS_STATUSES,
-    UP_NEW_DND_SET_INFO_PATH,
     DndPeriod,
     YQTError,
     YQTHTTPError,
     YQTResponseError,
     build_watch_index,
     compute_sign,
+    dnd_schedule_fields,
     hash_password,
     photo_wall_filename,
     split_dids,
@@ -415,16 +413,9 @@ class YQTClient:
         return response
 
     def find_set_info(self, *, did: str, did_id: str = "", sid: str | None = None) -> dict[str, Any]:
-        """Fetch the shared watch-settings payload (DND schedule, SOS numbers, SMS alerts, etc.).
-
-        This is the read-side counterpart traced alongside several write flows in
-        https://github.com/Niek/yqt-smart-api/issues/13, including
-        set_dnd_schedule(). The response shape beyond the DND fields is not
-        parsed into typed data yet; callers interested in another settings
-        group should read the raw payload for now.
-        """
+        """Fetch shared settings, including DND, SOS numbers and SMS alerts."""
         did, did_id = self.resolve_device(did, did_id)
-        path = self._session_path(sid, FIND_SET_INFO_PATH_SUFFIX)
+        path = self._session_path(sid, "/S10APP/v2_findSetInfo")
         payload = self._signed_params(
             {
                 "did_id": did_id,
@@ -444,19 +435,8 @@ class YQTClient:
         periods: Sequence[DndPeriod] = (),
         sid: str | None = None,
     ) -> dict[str, Any]:
-        """Write the Do Not Disturb schedule for current-generation (DC == 2) watches.
-
-        `periods` takes up to MAX_DND_PERIODS DndPeriod entries; any remaining
-        slots are sent as disabled. Unlike most calls here, upNewDndSetInfo is a
-        root-level endpoint (no "/app/{sid}" prefix) -- see
-        https://github.com/Niek/yqt-smart-api/issues/13 for why it is kept
-        separate from _session_path()-based calls.
-
-        Traced from APK analysis and confirmed working against a live device
-        as of 2026-10-08 (see issue #13) for current-generation watches.
-        """
-        if len(periods) > MAX_DND_PERIODS:
-            raise YQTError(f"set_dnd_schedule supports at most {MAX_DND_PERIODS} periods, got {len(periods)}")
+        """Replace the DC == 2 schedule, clearing unused slots."""
+        fields = dnd_schedule_fields(periods)
 
         did, did_id = self.resolve_device(did, did_id)
         session = sid or self.session_id
@@ -465,18 +445,15 @@ class YQTClient:
         if not supports_dnd_schedule(self._device_index[did].get("config", "")):
             raise YQTError("DND schedule writing requires a watch advertising DC:2; log in to load device metadata")
 
-        padded_periods = list(periods) + [DndPeriod.disabled()] * (MAX_DND_PERIODS - len(periods))
         payload: dict[str, Any] = {
             "sid": session,
             "did": did,
             "did_id": did_id,
             "language": self.language,
+            **fields,
         }
-        for index, period in enumerate(padded_periods, start=1):
-            payload[f"new_dnd{index}"] = period.to_period_string()
-            payload[f"new_dnd{index}_open"] = period.open_flag
 
-        response = self._request_json("POST", UP_NEW_DND_SET_INFO_PATH, self._signed_params(payload))
+        response = self._request_json("POST", "/S10APP/upNewDndSetInfo", self._signed_params(payload))
         self._ensure_status(response, {1})
         return response
 
