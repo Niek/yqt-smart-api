@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 from .protocol import (
@@ -21,14 +22,17 @@ from .protocol import (
     DEFAULT_SIGN_FLAG,
     REGIONS,
     SUCCESS_STATUSES,
+    DndPeriod,
     YQTError,
     YQTHTTPError,
     YQTResponseError,
     build_watch_index,
     compute_sign,
+    dnd_schedule_fields,
     hash_password,
     photo_wall_filename,
     split_dids,
+    supports_dnd_schedule,
     watches_to_rows,
 )
 from .transport import (
@@ -406,6 +410,51 @@ class YQTClient:
         )
         response = self._request_json("GET", path, payload)
         self._ensure_success(response)
+        return response
+
+    def find_set_info(self, *, did: str, did_id: str = "", sid: str | None = None) -> dict[str, Any]:
+        """Fetch shared settings, including DND, SOS numbers and SMS alerts."""
+        did, did_id = self.resolve_device(did, did_id)
+        path = self._session_path(sid, "/S10APP/v2_findSetInfo")
+        payload = self._signed_params(
+            {
+                "did_id": did_id,
+                "did": did,
+                "language": self.language,
+            }
+        )
+        response = self._request_json("GET", path, payload)
+        self._ensure_success(response)
+        return response
+
+    def set_dnd_schedule(
+        self,
+        *,
+        did: str,
+        did_id: str = "",
+        periods: Sequence[DndPeriod] = (),
+        sid: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace the DC == 2 schedule, clearing unused slots."""
+        fields = dnd_schedule_fields(periods)
+
+        did, did_id = self.resolve_device(did, did_id)
+        session = sid or self.session_id
+        if not session:
+            raise YQTError("session_id is required; call login() first or pass sid= explicitly")
+        if not supports_dnd_schedule(self._device_index[did].get("config", "")):
+            raise YQTError("DND schedule writing requires a watch advertising DC:2; log in to load device metadata")
+
+        payload: dict[str, Any] = {
+            "sid": session,
+            "did": did,
+            "did_id": did_id,
+            "language": self.language,
+            **fields,
+        }
+
+        response = self._request_json("POST", "/S10APP/upNewDndSetInfo", self._signed_params(payload))
+        self._ensure_status(response, {1})
         return response
 
     def signed_get(self, path: str, **params: Any) -> dict[str, Any]:

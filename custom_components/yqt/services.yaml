@@ -1,0 +1,10 @@
+set_dnd_schedule:
+  target:
+    entity:
+      integration: yqt
+  fields:
+    periods:
+      example: '["08:00-15:00:mon,tue,wed,thu,fri"]'
+      required: true
+      selector:
+        object:

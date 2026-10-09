@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfSpeed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .entity import YQTEntity
+from .coordinator import YQTDndSettingsCoordinator
+from .core.protocol import YQTWatch, supports_dnd_schedule
+from .entity import YQTEntity, watch_device_info
 
 
 async def async_setup_entry(
@@ -16,7 +21,9 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    coordinator = runtime["coordinator"]
+    dnd_coordinator = runtime["dnd_coordinator"]
     entities = []
     for did in coordinator.data:
         entities.append(YQTBatterySensor(coordinator, did))
@@ -24,6 +31,8 @@ async def async_setup_entry(
         entities.append(YQTSpeedSensor(coordinator, did))
         entities.append(YQTWifiAccessPointsSensor(coordinator, did))
         entities.append(YQTCellTowersSensor(coordinator, did))
+        if supports_dnd_schedule(coordinator.data[did].watch.config):
+            entities.append(YQTDndSensor(dnd_coordinator, coordinator.data[did].watch))
     async_add_entities(entities)
 
 
@@ -104,3 +113,39 @@ class YQTCellTowersSensor(YQTEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, object]:
         return {"cell_towers": self.snapshot.cell_towers}
+
+
+class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
+    """Configured schedule, not the watch's current DND state."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "dnd_schedule"
+    _attr_icon = "mdi:bell-sleep"
+
+    def __init__(self, coordinator: YQTDndSettingsCoordinator, watch: YQTWatch) -> None:
+        super().__init__(coordinator)
+        self._did = watch.did
+        self._attr_unique_id = f"{watch.did}_dnd_schedule"
+        self._attr_device_info = watch_device_info(watch)
+
+    @property
+    def native_value(self) -> str | None:
+        periods = (self.coordinator.data or {}).get(self._did)
+        if periods is None:
+            return None
+        return "; ".join(str(period) for period in periods) or "off"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attributes: dict[str, Any] = {}
+        periods = (self.coordinator.data or {}).get(self._did)
+        if periods is not None:
+            attributes["periods"] = [
+                {
+                    "start": period.start,
+                    "end": period.end,
+                    "weekdays": period.weekday_names,
+                }
+                for period in periods
+            ]
+        return attributes

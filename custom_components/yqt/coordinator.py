@@ -8,10 +8,10 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, POLL_INTERVAL, REQUEST_LOCATION_REFRESH_DELAY
+from .const import DND_POLL_INTERVAL, DOMAIN, POLL_INTERVAL, REQUEST_LOCATION_REFRESH_DELAY
 from .core.async_client import YQTApiClient
 from .core.protocol import DEVICE_OFFLINE_STATUS
-from .core.protocol import YQTAuthError, YQTError, YQTResponseError, YQTWatchState
+from .core.protocol import YQTAuthError, YQTError, YQTResponseError, YQTWatchState, DndPeriod, extract_dnd_periods, supports_dnd_schedule
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,3 +77,30 @@ class YQTDataUpdateCoordinator(DataUpdateCoordinator[dict[str, YQTWatchState]]):
     def _async_handle_delayed_refresh(self, _now) -> None:
         self._delayed_refresh_unsub = None
         self.hass.async_create_task(self.async_request_refresh())
+
+
+class YQTDndSettingsCoordinator(DataUpdateCoordinator[dict[str, list[DndPeriod] | None]]):
+    """Poll settings independently so failures do not interrupt location updates."""
+
+    def __init__(self, hass: HomeAssistant, client: YQTApiClient, main_coordinator: YQTDataUpdateCoordinator) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_dnd_settings",
+            update_interval=DND_POLL_INTERVAL,
+        )
+        self.client = client
+        self._main_coordinator = main_coordinator
+
+    async def _async_update_data(self) -> dict[str, list[DndPeriod] | None]:
+        results: dict[str, list[DndPeriod] | None] = {}
+        for did, state in self._main_coordinator.data.items():
+            if not supports_dnd_schedule(state.watch.config):
+                continue
+            try:
+                results[did] = extract_dnd_periods(await self.client.async_find_set_info(did))
+            except YQTAuthError as exc:
+                raise ConfigEntryAuthFailed(str(exc)) from exc
+            except YQTError as exc:
+                _LOGGER.debug("find_set_info failed for %s: %s", did, exc)
+        return results

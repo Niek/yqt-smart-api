@@ -15,12 +15,20 @@ from pathlib import Path
 from custom_components.yqt.core.protocol import (
     DEFAULT_LANGUAGE,
     REGIONS,
+    DndPeriod,
     YQTError,
     YQTResponseError,
     photo_wall_filename,
     split_dids,
 )
 from custom_components.yqt.core.sync_client import YQTClient
+
+
+def _dnd_period(value: str) -> DndPeriod:
+    try:
+        return DndPeriod.parse(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -99,6 +107,35 @@ def _build_parser() -> argparse.ArgumentParser:
     switches_parser = subparsers.add_parser("switches", help="Fetch device switch status.")
     switches_parser.add_argument("--did", required=True)
     switches_parser.add_argument("--did-id", default="")
+
+    find_settings_parser = subparsers.add_parser(
+        "find-settings", help="Fetch the shared watch-settings payload (DND schedule, SOS numbers, etc.)."
+    )
+    find_settings_parser.add_argument("--did", required=True)
+    find_settings_parser.add_argument("--did-id", default="")
+
+    set_dnd_parser = subparsers.add_parser(
+        "set-dnd",
+        help=(
+            "Write the Do Not Disturb schedule for current-generation (DC == 2) watches. "
+            "Replaces all slots; log in to load capability metadata."
+        ),
+    )
+    set_dnd_parser.add_argument("--did", required=True)
+    set_dnd_parser.add_argument("--did-id", default="")
+    dnd_action = set_dnd_parser.add_mutually_exclusive_group(required=True)
+    dnd_action.add_argument(
+        "--period",
+        action="append",
+        default=[],
+        metavar="START-END:DAYS",
+        type=_dnd_period,
+        help=(
+            "e.g. 08:00-15:00:mon,tue,wed,thu,fri. Repeat up to 4 times (one per schedule slot). "
+            "Start must be before end in watch local time."
+        ),
+    )
+    dnd_action.add_argument("--clear", action="store_true", help="Explicitly clear all DND schedule slots.")
 
     return parser
 
@@ -220,6 +257,12 @@ def main() -> None:
     elif args.command == "switches":
         _, did_id = client.resolve_device(args.did, args.did_id)
         response = client.find_device_switch(did=args.did, did_id=did_id)
+    elif args.command == "find-settings":
+        _, did_id = client.resolve_device(args.did, args.did_id)
+        response = client.find_set_info(did=args.did, did_id=did_id)
+    elif args.command == "set-dnd":
+        _, did_id = client.resolve_device(args.did, args.did_id)
+        response = client.set_dnd_schedule(did=args.did, did_id=did_id, periods=args.period)
     else:
         raise SystemExit(f"unsupported command: {args.command}")
 

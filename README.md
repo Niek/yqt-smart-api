@@ -41,6 +41,32 @@ Each watch becomes a device with:
 - a stale-location binary sensor
 - a button to request a fresh location
 - diagnostic sensors for nearby Wi-Fi access points and cell towers (disabled by default)
+- a Do Not Disturb schedule sensor for supported watches (`DC == 2`), with
+  enabled periods and weekday names in its attributes; this is not the current DND state
+
+The integration also registers a **`yqt.set_dnd_schedule`** service to write
+the schedule, usable from Developer Tools, scripts, or automations:
+
+```yaml
+action: yqt.set_dnd_schedule
+target:
+  device_id: YOUR_WATCH_DEVICE_ID
+data:
+  periods:
+    - "08:00-15:00:mon,tue,wed,thu,fri"
+```
+
+The action replaces all four schedule slots; omitted slots are cleared. Pass
+`periods: []` explicitly to clear the schedule. Times use the watch's local
+clock and must be on the same day, with start before end. Only watches
+advertising `DC == 2` are supported. The sensor refreshes after a successful
+write and every 30 minutes. Empty slots and periods switched off in the app
+are omitted from readback; a per-watch settings read error shows unknown.
+
+Device, entity, area and label targets are supported. Unsupported watches
+are skipped; the action fails if no supported watch matches. Updates are
+sequential, not atomic: if a write fails, earlier writes remain applied and
+later watches are not updated.
 
 ## Command-line client
 
@@ -50,9 +76,15 @@ With [uv](https://docs.astral.sh/uv/) installed:
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD devices
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD last-position --did YOUR_DEVICE_ID
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD fresh-position --did YOUR_DEVICE_ID
+./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD find-settings --did YOUR_DEVICE_ID
+./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD set-dnd --did YOUR_DEVICE_ID --period 08:00-15:00:mon,tue,wed,thu,fri
 ```
 
 Run `./yqt_client.py --help` for all commands. The CLI and integration share the same code in `custom_components/yqt/core/`.
+
+`set-dnd` uses the same full-schedule replacement semantics. Supply `--period`
+or explicitly use `--clear` to clear the schedule; log in to load the watch's
+capability metadata.
 
 ## Disclaimer
 

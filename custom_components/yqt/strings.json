@@ -50,6 +50,9 @@
       },
       "cell_towers": {
         "name": "Cell towers"
+      },
+      "dnd_schedule": {
+        "name": "Do Not Disturb schedule"
       }
     },
     "binary_sensor": {
@@ -60,6 +63,18 @@
     "button": {
       "request_location": {
         "name": "Request location"
+      }
+    }
+  },
+  "services": {
+    "set_dnd_schedule": {
+      "name": "Set Do Not Disturb schedule",
+      "description": "Replace all Do Not Disturb schedule slots on a supported watch. Omitted slots are cleared. Pass an empty periods list to clear the schedule.",
+      "fields": {
+        "periods": {
+          "name": "Periods",
+          "description": "Up to 4 schedule windows as START-END:DAYS, e.g. 08:00-15:00:mon,tue,wed,thu,fri. Times use the watch's local clock, with start before end. Pass [] to clear all slots."
+        }
       }
     }
   }

@@ -243,6 +243,42 @@ Observed quirks:
 - Polling `v2_findLastPosition` per watch is therefore more reliable for Home
   Assistant.
 
+### Shared settings and Do Not Disturb
+
+APK `1.1.5` (version code 16) uses these DND endpoints:
+
+| Operation | Method and path | Endpoint-specific inner parameters |
+| --- | --- | --- |
+| Shared settings read | `GET /app/{sid}/S10APP/v2_findSetInfo` | `did`, `did_id` |
+| Four-slot DND write | `POST /S10APP/upNewDndSetInfo` | `sid`, `did`, `did_id`, four `new_dndN` strings and four `new_dndN_open` flags |
+
+The write endpoint has no `/app/{sid}` prefix. Both use the existing signed,
+encrypted transport. Settings reads also return phone numbers; HA retains
+only parsed DND periods. The CLI exposes the full response for inspection.
+
+- `DeviceParseUtils` (`com.tgelec.aqsh.utils.l`) reads underscore-separated
+  `KEY:value` configuration pairs. `DndActivity1.B8` selects this flow only
+  for `DC == 2`; unknown and older watches are excluded.
+- `DndActivity1.D8` sends `HH:mm-HH:mm-xxxxxxx` periods with Sunday-first
+  weekday bits (`0111110` = Monday-Friday), independently of the enabled
+  (`2`) or disabled (`1`) flags. `DndChooseDateActivity.E8` requires start
+  before end and at least one weekday; overnight windows are rejected.
+- `SettingResponse` declares `data` as a list of settings objects.
+  `DndActivity1.F8` checks the empty sentinel `00:00-00:00-0000000` before
+  the flag and treats only `2` as enabled. HA omits empty and switched-off
+  slots; incomplete responses and malformed enabled slots remain unknown.
+- Retrofit `f7.a.L0` and `DndAction.K3` declare the root POST; its callback
+  accepts `status=1`. The client also sends `sid`, as in the contributor's
+  implementation (the APK's declared fields do not require it).
+
+Writes replace all four slots, padding unused slots with the empty sentinel
+and flag `1`. An empty list clears the schedule. HA refreshes after success;
+multi-watch updates are sequential and may partially succeed.
+
+[Issue #13](https://github.com/Niek/yqt-smart-api/issues/13) records the older
+watch flow, other settings and the contributor's app/sensor readback report.
+Watch enforcement has not been independently verified.
+
 ## Commands and feature endpoints
 
 ### `v2_sendOrder`
@@ -368,6 +404,10 @@ last position, and exposes:
 - disabled-by-default Wi-Fi and cell-tower diagnostic sensors
 - a stale-location binary sensor
 - a button that sends `D3` and schedules a later refresh
+- a Do Not Disturb schedule sensor for `DC == 2` watches, polled independently
+  every 30 minutes, exposing only parsed periods
+- a `yqt.set_dnd_schedule` action for full-schedule replacement, followed by
+  settings refresh; expired-session responses are retried once after login
 
 Installation and user-facing feature documentation belongs in
 [`README.md`](README.md), rather than this protocol reference.

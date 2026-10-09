@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import threading
 import unittest
 from datetime import UTC, datetime
@@ -11,7 +12,12 @@ import custom_components.yqt as yqt
 from custom_components.yqt.const import DOMAIN
 from custom_components.yqt.core.async_client import YQTApiClient
 from custom_components.yqt.core.protocol import (
+    DISABLED_DND_PERIOD,
     REGIONS,
+    DndPeriod,
+    YQTError,
+    extract_dnd_periods,
+    dnd_schedule_fields,
     YQTResponseError,
     YQTWatch,
     YQTWatchState,
@@ -20,6 +26,7 @@ from custom_components.yqt.core.protocol import (
     compute_sign,
     DEFAULT_CLIENT_VERSION,
     is_login_timeout_response,
+    supports_dnd_schedule,
 )
 from custom_components.yqt.core.sync_client import YQTClient
 from custom_components.yqt.core.transport import (
@@ -40,6 +47,14 @@ def make_watch() -> YQTWatch:
         nickname="John",
         rolename="Parent",
     )
+
+
+def dnd_settings(**overrides):
+    fields = {}
+    for index in range(1, 5):
+        fields[f"new_dnd{index}"] = DISABLED_DND_PERIOD
+        fields[f"new_dnd{index}_open"] = 1
+    return fields | overrides
 
 
 class ApiHelpersTestCase(unittest.TestCase):
@@ -371,6 +386,96 @@ class ApiHelpersTestCase(unittest.TestCase):
         self.assertFalse(is_login_timeout_response({"status": 1, "message": "OK"}))
 
 
+class DndProtocolTestCase(unittest.TestCase):
+    def test_formats_round_trip(self):
+        for value, wire, days in (
+            ("08:00-15:00:mon,tue,wed,thu,fri", "08:00-15:00-0111110", [1, 2, 3, 4, 5]),
+            ("12:00-13:00:sun,sat", "12:00-13:00-1000001", [0, 6]),
+            ("00:00-23:59:MON, mon", "00:00-23:59-0100000", [1]),
+        ):
+            with self.subTest(value=value):
+                period = DndPeriod.parse(value)
+                self.assertEqual(period.weekdays, frozenset(days))
+                self.assertEqual(period.to_period_string(), wire)
+                self.assertEqual(DndPeriod.from_period_string(wire), period)
+                self.assertEqual(DndPeriod.parse(str(period)), period)
+
+    def test_invalid_inputs_and_direct_construction(self):
+        for parse, values in (
+            (DndPeriod.parse, ["garbage", "08:00-15:00:funday", "08:00-15:00:", "08:00-15:00:mon,",
+                              "22:00-07:00:mon", "08:00-08:00:mon", "8:00-15:00:mon", "08:00-25:00:mon"]),
+            (DndPeriod.from_period_string, ["garbage", "08:00-15:00-01", "08:00-15:00-0111112",
+                                           "08:00-15:00-0000000", "08:00-07:99-0111110", DISABLED_DND_PERIOD]),
+        ):
+            for value in values:
+                with self.subTest(parse=parse.__name__, value=value), self.assertRaises(ValueError):
+                    parse(value)
+        for start, end, days in (("8:00", "15:00", {1}), ("08:00", "15:00", {7}),
+                                 ("22:00", "07:00", {1}), ("08:00", "15:00", set())):
+            with self.subTest(start=start, end=end, days=days), self.assertRaises(ValueError):
+                DndPeriod(start, end, frozenset(days))
+
+    def test_write_fields_and_capability(self):
+        period = DndPeriod.parse("08:00-15:00:mon,tue,wed,thu,fri")
+        for count in (0, 1, 4):
+            fields = dnd_schedule_fields([period] * count)
+            self.assertEqual(len(fields), 8)
+            for index in range(1, 5):
+                self.assertEqual(fields[f"new_dnd{index}"], "08:00-15:00-0111110" if index <= count else DISABLED_DND_PERIOD)
+                self.assertEqual(fields[f"new_dnd{index}_open"], "2" if index <= count else "1")
+        with self.assertRaises(YQTError):
+            dnd_schedule_fields([period] * 5)
+        for config in ("SOS:1_DC:2_TB:1", "", "DC:0", "DC:1", "DC:20", "ADC:2", "DC", "DC:invalid"):
+            self.assertEqual(supports_dnd_schedule(config), config == "SOS:1_DC:2_TB:1")
+
+    def test_readback(self):
+        period = DndPeriod.parse("08:00-15:00:mon,tue,wed,thu,fri")
+        fields = dnd_settings(new_dnd1=period.to_period_string(), new_dnd1_open=2)
+        cases = [({"data": [fields]}, [period]), ({"data": fields}, [period]), (fields, [period])]
+        cases += [(payload, None) for payload in (None, [], {}, {"data": []}, {"data": [None]}, {"data": "bad"})]
+        cases += [({"data": [{k: v for k, v in fields.items() if k != missing}]}, None)
+                  for missing in ("new_dnd4", "new_dnd1_open")]
+        cases += [({"data": [dnd_settings(new_dnd1=value, new_dnd1_open=flag)]}, [])
+                  for value in (None, "", "bad", period.to_period_string(), DISABLED_DND_PERIOD)
+                  for flag in (0, "0", 1, None, 3)]
+        cases += [({"data": [dnd_settings(new_dnd1_open=2)]}, [])]
+        cases += [({"data": [dnd_settings(new_dnd1=value, new_dnd1_open=flag)]}, None)
+                  for value in (None, "", "bad", "00:00-00:00-0111110") for flag in (2, "2")]
+        for payload, expected in cases:
+            with self.subTest(payload=payload):
+                self.assertEqual(extract_dnd_periods(payload), expected)
+
+
+class DndScheduleClientTestCase(unittest.TestCase):
+    def setUp(self):
+        self.client = YQTClient(region="europe", session_id="abc123")
+        self.client._device_index["test-watch"] = {"did": "test-watch", "did_id": "test-id", "config": "DC:2"}
+
+    def test_requests(self):
+        with patch.object(self.client, "_request_json", return_value={"status": 1}) as request:
+            self.client.find_set_info(did="test-watch")
+            self.assertEqual(request.call_args.args[:2], ("GET", "/app/abc123/S10APP/v2_findSetInfo"))
+            self.assertEqual(request.call_args.args[2]["did_id"], "test-id")
+            periods = [DndPeriod.parse("08:00-15:00:mon")]
+            self.client.set_dnd_schedule(did="test-watch", periods=periods)
+            method, path, fields = request.call_args.args
+            self.assertEqual((method, path), ("POST", "/S10APP/upNewDndSetInfo"))
+            expected = {"sid": "abc123", "did": "test-watch", "did_id": "test-id", **dnd_schedule_fields(periods)}
+            self.assertTrue(expected.items() <= fields.items())
+
+    def test_rejects_unsupported_watches_and_failed_writes(self):
+        with patch.object(self.client, "_request_json", return_value={"status": 4}) as request:
+            for config in ("DC:1", ""):
+                self.client._device_index["test-watch"]["config"] = config
+                with self.assertRaisesRegex(YQTError, "DC:2"):
+                    self.client.set_dnd_schedule(did="test-watch")
+            request.assert_not_called()
+            self.client._device_index["test-watch"]["config"] = "DC:2"
+            with self.assertRaises(YQTResponseError):
+                self.client.set_dnd_schedule(did="test-watch")
+            request.assert_called_once()
+
+
 class TransportTestCase(unittest.TestCase):
     def test_regions_match_current_apk_endpoints(self) -> None:
         for name, region in REGIONS.items():
@@ -467,6 +572,93 @@ class AsyncClientTransportTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(session.request.call_args.kwargs["ssl"], context)
 
 
+class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.client = YQTApiClient(MagicMock(), region="europe", loginname="demo@example.com", password="test")
+        self.client.session_id = "abc123"
+        self.client._watches["test-watch"] = YQTWatch("test-watch", "test-id", "", "", "", config="DC:2")
+
+    async def test_requests_without_model(self):
+        with patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request:
+            await self.client.async_find_set_info("test-watch")
+            self.assertEqual(request.call_args.args, ("GET", "/app/abc123/S10APP/v2_findSetInfo"))
+            self.assertEqual(request.call_args.kwargs["params"]["did_id"], "test-id")
+            periods = [DndPeriod.parse("08:00-15:00:mon")]
+            await self.client.async_set_dnd_schedule("test-watch", periods)
+            self.assertEqual(request.call_args.args, ("POST", "/S10APP/upNewDndSetInfo"))
+            expected = {"sid": "abc123", "did": "test-watch", "did_id": "test-id", **dnd_schedule_fields(periods)}
+            self.assertTrue(expected.items() <= request.call_args.kwargs["data"].items())
+
+    async def test_session_handling(self):
+        expired = {"status": -1, "message": "login timeout"}
+        for method, args in ((self.client.async_find_set_info, ()), (self.client.async_set_dnd_schedule, ([],))):
+            for replies in ([expired, {"status": 1}], [expired, expired], [{"status": 3}], [{"status": 4}], [{"status": 1}]):
+                self.client.session_id = None if len(replies) == 1 and replies[0]["status"] == 1 else "expired"
+                self.client._watches["test-watch"].did_id = "test-id"
+
+                async def login():
+                    self.client.session_id = "fresh"
+                    self.client._watches["test-watch"] = YQTWatch("test-watch", "fresh-id", "", "", "", config="DC:2")
+
+                with (
+                    self.subTest(method=method.__name__, replies=replies),
+                    patch.object(self.client, "async_login", side_effect=login) as initial_login,
+                    patch.object(self.client, "_async_reauthenticate", side_effect=login) as retry_login,
+                    patch.object(self.client, "_request_json", new=AsyncMock(side_effect=replies)) as request,
+                ):
+                    success = replies[-1]["status"] == 1 or (not args and replies[-1]["status"] == 4)
+                    if success:
+                        await method("test-watch", *args)
+                    else:
+                        with self.assertRaises(YQTError):
+                            await method("test-watch", *args)
+                    if replies[-1]["status"] == 1:
+                        fields = request.call_args.kwargs["data" if args else "params"]
+                        self.assertEqual(fields["did_id"], "fresh-id")
+                        if args:
+                            self.assertEqual(fields["sid"], "fresh")
+                        else:
+                            self.assertEqual(request.call_args.args[1], "/app/fresh/S10APP/v2_findSetInfo")
+                    self.assertEqual(request.await_count, len(replies))
+                    self.assertEqual(retry_login.await_count, int(len(replies) == 2))
+                    self.assertEqual(initial_login.await_count, int(len(replies) == 1 and replies[0]["status"] == 1))
+
+    async def test_capability_checked_before_send_and_after_retry(self):
+        for initial in ("", "DC:1", "DC:2"):
+            self.client._watches["test-watch"].config = initial
+
+            async def login():
+                self.client._watches["test-watch"].config = "DC:1"
+
+            with (
+                self.subTest(initial=initial),
+                patch.object(self.client, "_async_reauthenticate", side_effect=login),
+                patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": -1, "message": "login timeout"})) as request,
+            ):
+                with self.assertRaisesRegex(YQTError, "DC:2"):
+                    await self.client.async_set_dnd_schedule("test-watch", [])
+                self.assertEqual(request.await_count, int(initial == "DC:2"))
+
+    async def test_location_requires_a_model_before_initial_send_and_retry(self) -> None:
+        for missing_initially in (True, False):
+            client = self.client
+            client._watches["test-watch"].model = "" if missing_initially else "g36f"
+
+            async def reauthenticate():
+                client._watches["test-watch"].model = ""
+
+            with (
+                self.subTest(missing_initially=missing_initially),
+                patch.object(client, "_async_send_order", new=AsyncMock(return_value={
+                    "status": -1, "message": "login timeout"
+                })) as send,
+                patch.object(client, "_async_reauthenticate", side_effect=reauthenticate),
+            ):
+                with self.assertRaisesRegex(YQTError, "device model is required"):
+                    await client.async_request_location("test-watch")
+                self.assertEqual(send.await_count, 0 if missing_initially else 1)
+
+
 class IntegrationUnloadTestCase(unittest.TestCase):
     def test_unload_does_not_close_home_assistant_managed_session(self) -> None:
         class FakeConfigEntries:
@@ -501,6 +693,42 @@ class IntegrationUnloadTestCase(unittest.TestCase):
         self.assertTrue(coordinator.shutdown_called)
         self.assertFalse(session.close_called)
         self.assertNotIn(entry.entry_id, hass.data[DOMAIN])
+
+
+class DndCliTestCase(unittest.TestCase):
+    def test_invalid_period_reports_reason_before_login(self) -> None:
+        import yqt_client
+
+        for period, reason in (
+            ("22:00-07:00:mon", "overnight periods are not supported"),
+            ("08:00-15:00:funday", "use sun,mon,tue,wed,thu,fri,sat"),
+        ):
+            with (
+                self.subTest(period=period),
+                patch("sys.argv", ["yqt_client.py", "set-dnd", "--did", "test-watch", "--period", period]),
+                patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                patch.object(yqt_client, "YQTClient") as client,
+                self.assertRaises(SystemExit) as error,
+            ):
+                yqt_client.main()
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("error: argument --period:", stderr.getvalue())
+            self.assertIn(reason, stderr.getvalue())
+            client.assert_not_called()
+
+    def test_explicit_action_required_before_login(self):
+        import yqt_client
+
+        for args in ([], ["--clear", "--period", "08:00-15:00:mon"]):
+            with (
+                self.subTest(args=args),
+                patch("sys.argv", ["yqt_client.py", "set-dnd", "--did", "test-watch", *args]),
+                patch("sys.stderr"),
+                patch.object(yqt_client, "YQTClient") as client,
+                self.assertRaises(SystemExit),
+            ):
+                yqt_client.main()
+            client.assert_not_called()
 
 
 if __name__ == "__main__":
