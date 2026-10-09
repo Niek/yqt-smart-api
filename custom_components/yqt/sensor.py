@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import YQTDataUpdateCoordinator, YQTDndSettingsCoordinator
+from .coordinator import YQTDndSettingsCoordinator
 from .core.protocol import YQTWatch, supports_dnd_schedule
 from .entity import YQTEntity, watch_device_info
 

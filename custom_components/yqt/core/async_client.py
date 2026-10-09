@@ -185,10 +185,18 @@ class YQTApiClient:
 
     async def async_find_set_info(self, did: str) -> dict[str, Any]:
         """Fetch shared settings, including DND, SOS numbers and SMS alerts."""
+
         async def send(watch: YQTWatch) -> dict[str, Any]:
             return await self._request_json(
-                "GET", self._session_path("/S10APP/v2_findSetInfo"),
-                params=self._signed_params({"language": self.language, "did_id": watch.did_id, "did": watch.did}),
+                "GET",
+                self._session_path("/S10APP/v2_findSetInfo"),
+                params=self._signed_params(
+                    {
+                        "language": self.language,
+                        "did_id": watch.did_id,
+                        "did": watch.did,
+                    }
+                ),
             )
 
         response = await self._async_watch_request(did, send)
@@ -203,10 +211,17 @@ class YQTApiClient:
             if not supports_dnd_schedule(watch.config):
                 raise YQTError("DND schedule writing requires a watch advertising DC:2")
             return await self._request_json(
-                "POST", "/S10APP/upNewDndSetInfo", data=self._signed_params({
-                    "sid": self.session_id, "did": watch.did, "did_id": watch.did_id,
-                    "language": self.language, **fields,
-                }),
+                "POST",
+                "/S10APP/upNewDndSetInfo",
+                data=self._signed_params(
+                    {
+                        "sid": self.session_id,
+                        "did": watch.did,
+                        "did_id": watch.did_id,
+                        "language": self.language,
+                        **fields,
+                    }
+                ),
             )
 
         response = await self._async_watch_request(did, send)
@@ -214,7 +229,9 @@ class YQTApiClient:
         return response
 
     async def _async_watch_request(
-        self, did: str, send: Callable[[YQTWatch], Awaitable[dict[str, Any]]],
+        self,
+        did: str,
+        send: Callable[[YQTWatch], Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
         """Send with current watch metadata, retrying an expired session once."""
         response = await send(await self._async_ensure_watch(did))

@@ -175,7 +175,7 @@ class DndPeriod:
 
     start: str
     end: str
-    weekdays: frozenset[int] = field(default_factory=frozenset)
+    weekdays: frozenset[int]
 
     def __post_init__(self) -> None:
         # Validate direct construction as well as parsed CLI and wire inputs.
