@@ -21,7 +21,7 @@ Confirmed working:
 
 ### Install via HACS
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Kasperbi&repository=yqt-smart-api&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
 
 1. Add this repository to HACS as a custom repository (category `Integration`).
 2. Install `YQT Smart` and restart Home Assistant.
@@ -41,11 +41,8 @@ Each watch becomes a device with:
 - a stale-location binary sensor
 - a button to request a fresh location
 - diagnostic sensors for nearby Wi-Fi access points and cell towers (disabled by default)
-- a Do Not Disturb schedule sensor. It reads the watch's shared settings
-  endpoint, traced from APK analysis and confirmed working against a live
-  device as of 2026-10-08. It can still legitimately show "Unknown" on a
-  watch/account where the response doesn't match -- the raw server response
-  is always available as an attribute on the sensor.
+- a Do Not Disturb schedule sensor for supported watches (`DC == 2`), with
+  configured periods in its attributes; this is not the current DND state
 
 The integration also registers a **`yqt.set_dnd_schedule`** service to write
 the schedule, usable from Developer Tools, scripts, or automations:
@@ -56,13 +53,14 @@ target:
   device_id: YOUR_WATCH_DEVICE_ID
 data:
   periods:
-    - "22:00-07:00:mon,tue,wed,thu,fri"
+    - "08:00-15:00:mon,tue,wed,thu,fri"
 ```
 
-Omit `periods` entirely (or pass an empty list) to clear/disable the
-schedule. Only works for current-generation (`DC == 2`) watches; traced from
-APK analysis and confirmed working against a live device as of 2026-10-08 --
-see [`REVERSE_ENGINEERING.md`](REVERSE_ENGINEERING.md) for details.
+The action replaces all four schedule slots; omitted slots are cleared. Pass
+`periods: []` explicitly to clear the schedule. Times use the watch's local
+clock and must be on the same day, with start before end. Only watches
+advertising `DC == 2` are supported. The sensor refreshes after a successful
+write and every 30 minutes.
 
 ## Command-line client
 
@@ -73,16 +71,13 @@ With [uv](https://docs.astral.sh/uv/) installed:
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD last-position --did YOUR_DEVICE_ID
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD fresh-position --did YOUR_DEVICE_ID
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD find-settings --did YOUR_DEVICE_ID
-./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD set-dnd --did YOUR_DEVICE_ID --period 22:00-07:00:mon,tue,wed,thu,fri
+./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD set-dnd --did YOUR_DEVICE_ID --period 08:00-15:00:mon,tue,wed,thu,fri
 ```
 
 Run `./yqt_client.py --help` for all commands. The CLI and integration share the same code in `custom_components/yqt/core/`.
 
-`set-dnd` writes the Do Not Disturb schedule for current-generation (`DC == 2`)
-watches; it's traced from APK analysis and confirmed working against a live
-device as of 2026-10-08 -- see [`REVERSE_ENGINEERING.md`](REVERSE_ENGINEERING.md)
-and [issue #13](https://github.com/Niek/yqt-smart-api/issues/13). Omit
-`--period` entirely to clear/disable the schedule.
+`set-dnd` uses the same full-schedule replacement semantics. Omit `--period`
+to clear the schedule; log in to load the watch's capability metadata.
 
 ## Disclaimer
 

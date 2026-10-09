@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DND_POLL_INTERVAL, DOMAIN, POLL_INTERVAL, REQUEST_LOCATION_REFRESH_DELAY
 from .core.async_client import YQTApiClient
 from .core.protocol import DEVICE_OFFLINE_STATUS
-from .core.protocol import YQTAuthError, YQTError, YQTResponseError, YQTWatchState
+from .core.protocol import YQTAuthError, YQTError, YQTResponseError, YQTWatchState, supports_dnd_schedule
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,15 +81,7 @@ class YQTDataUpdateCoordinator(DataUpdateCoordinator[dict[str, YQTWatchState]]):
 
 
 class YQTDndSettingsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
-    """Polls the shared watch-settings endpoint (`v2_findSetInfo`) for DND info.
-
-    This endpoint was traced from APK analysis (see issue #13) and confirmed
-    working against a live device on 2026-10-08. Kept on its own, slower poll
-    (rather than folded into the main coordinator) so a failure here -- on an
-    account where it doesn't work, say -- only marks this coordinator's own
-    entities unavailable; it must never take down `YQTDataUpdateCoordinator`,
-    whose `v2_findLastPosition` polling is known-good.
-    """
+    """Poll settings independently so failures do not interrupt location updates."""
 
     def __init__(self, hass: HomeAssistant, client: YQTApiClient, main_coordinator: YQTDataUpdateCoordinator) -> None:
         super().__init__(
@@ -103,7 +95,9 @@ class YQTDndSettingsCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         results: dict[str, dict[str, Any]] = {}
-        for did in self._main_coordinator.data:
+        for did, state in self._main_coordinator.data.items():
+            if not supports_dnd_schedule(state.watch.config):
+                continue
             try:
                 results[did] = await self.client.async_find_set_info(did)
             except YQTAuthError as exc:

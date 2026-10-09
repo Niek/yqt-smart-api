@@ -34,6 +34,7 @@ from .protocol import (
     hash_password,
     photo_wall_filename,
     split_dids,
+    supports_dnd_schedule,
     watches_to_rows,
 )
 from .transport import (
@@ -461,6 +462,8 @@ class YQTClient:
         session = sid or self.session_id
         if not session:
             raise YQTError("session_id is required; call login() first or pass sid= explicitly")
+        if not supports_dnd_schedule(self._device_index[did].get("config", "")):
+            raise YQTError("DND schedule writing requires a watch advertising DC:2; log in to load device metadata")
 
         padded_periods = list(periods) + [DndPeriod.disabled()] * (MAX_DND_PERIODS - len(periods))
         payload: dict[str, Any] = {
@@ -474,7 +477,7 @@ class YQTClient:
             payload[f"new_dnd{index}_open"] = period.open_flag
 
         response = self._request_json("POST", UP_NEW_DND_SET_INFO_PATH, self._signed_params(payload))
-        self._ensure_success(response)
+        self._ensure_status(response, {1})
         return response
 
     def signed_get(self, path: str, **params: Any) -> dict[str, Any]:

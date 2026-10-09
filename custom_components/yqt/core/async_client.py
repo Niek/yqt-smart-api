@@ -36,6 +36,7 @@ from .protocol import (
     compute_sign,
     hash_password,
     is_login_timeout_response,
+    supports_dnd_schedule,
 )
 from .transport import (
     ENCRYPT_INDEX_HEADER,
@@ -185,12 +186,7 @@ class YQTApiClient:
         return response
 
     async def async_find_set_info(self, did: str) -> dict[str, Any]:
-        """Fetch the shared watch-settings payload (DND schedule, SOS numbers, etc.).
-
-        Traced from APK analysis and confirmed working against a live device
-        as of 2026-10-08 -- see FIND_SET_INFO_PATH_SUFFIX and
-        protocol.extract_dnd_periods.
-        """
+        """Fetch the shared watch-settings payload (DND schedule, SOS numbers, etc.)."""
         watch = await self._async_ensure_watch(did)
         response = await self._async_find_set_info_once(watch)
         if is_login_timeout_response(response):
@@ -215,20 +211,24 @@ class YQTApiClient:
         )
 
     async def async_set_dnd_schedule(self, did: str, periods: Sequence[DndPeriod]) -> dict[str, Any]:
-        """Write the Do Not Disturb schedule for current-generation (DC == 2) watches.
-
-        Mirrors YQTClient.set_dnd_schedule (see sync_client.py). Unlike most
-        calls here, upNewDndSetInfo is a root-level endpoint (no "/app/{sid}"
-        prefix). Traced from APK analysis and confirmed working against a
-        live device as of 2026-10-08 (see issue #13).
-        """
+        """Replace the DC == 2 schedule, clearing unused slots; retry an expired session once."""
         if len(periods) > MAX_DND_PERIODS:
             raise YQTError(f"async_set_dnd_schedule supports at most {MAX_DND_PERIODS} periods, got {len(periods)}")
         if not self.session_id:
             raise YQTError("session_id is required; call async_login() first")
 
         watch = await self._async_ensure_watch(did)
+        response = await self._async_set_dnd_schedule_once(watch, periods)
+        if is_login_timeout_response(response):
+            await self._async_reauthenticate()
+            watch = await self._async_ensure_watch(did)
+            response = await self._async_set_dnd_schedule_once(watch, periods)
+        self._ensure_status(response, {1})
+        return response
 
+    async def _async_set_dnd_schedule_once(self, watch: YQTWatch, periods: Sequence[DndPeriod]) -> dict[str, Any]:
+        if not supports_dnd_schedule(watch.config):
+            raise YQTError("DND schedule writing requires a watch advertising DC:2")
         padded_periods = list(periods) + [DndPeriod.disabled()] * (MAX_DND_PERIODS - len(periods))
         payload: dict[str, Any] = {
             "sid": self.session_id,
@@ -240,9 +240,7 @@ class YQTApiClient:
             payload[f"new_dnd{index}"] = period.to_period_string()
             payload[f"new_dnd{index}_open"] = period.open_flag
 
-        response = await self._request_json("POST", UP_NEW_DND_SET_INFO_PATH, data=self._signed_params(payload))
-        self._ensure_status(response, SUCCESS_STATUSES)
-        return response
+        return await self._request_json("POST", UP_NEW_DND_SET_INFO_PATH, data=self._signed_params(payload))
 
     async def _async_ensure_watch(self, did: str) -> YQTWatch:
         if did not in self._watches or not self.session_id:

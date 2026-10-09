@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import YQTDataUpdateCoordinator, YQTDndSettingsCoordinator
-from .core.protocol import DndPeriod, extract_dnd_periods
+from .core.protocol import DndPeriod, extract_dnd_periods, supports_dnd_schedule
 from .entity import YQTEntity
 
 _WEEKDAY_NAMES = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
@@ -34,7 +34,8 @@ async def async_setup_entry(
         entities.append(YQTSpeedSensor(coordinator, did))
         entities.append(YQTWifiAccessPointsSensor(coordinator, did))
         entities.append(YQTCellTowersSensor(coordinator, did))
-        entities.append(YQTDndSensor(dnd_coordinator, coordinator, did))
+        if supports_dnd_schedule(coordinator.data[did].watch.config):
+            entities.append(YQTDndSensor(dnd_coordinator, coordinator, did))
     async_add_entities(entities)
 
 
@@ -118,15 +119,7 @@ class YQTCellTowersSensor(YQTEntity, SensorEntity):
 
 
 class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
-    """Shows the watch's Do Not Disturb schedule, read from `v2_findSetInfo`.
-
-    That endpoint is traced from APK analysis and confirmed working against a
-    live device on 2026-10-08 (see REVERSE_ENGINEERING.md and issue #13), but
-    it can still legitimately sit at "Unknown" on an account/watch generation
-    where the response doesn't match -- `raw_find_set_info` is always exposed
-    as an attribute so the actual response shape can be inspected and this
-    parsing corrected if needed.
-    """
+    """Configured schedule, not the watch's current DND state."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "dnd_schedule"
@@ -146,7 +139,7 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.coordinator.last_update_success and self._did in self.coordinator.data
+        return self.coordinator.last_update_success and self._did in (self.coordinator.data or {})
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -160,10 +153,10 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
         )
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> str | None:
         periods = self._periods()
         if periods is None:
-            return "unknown"
+            return None
         active = [period for period in periods if period.enabled]
         if not active:
             return "off"
@@ -171,8 +164,7 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        raw = self.coordinator.data.get(self._did, {})
-        attributes: dict[str, Any] = {"raw_find_set_info": raw}
+        attributes: dict[str, Any] = {}
         periods = self._periods()
         if periods is not None:
             attributes["periods"] = [
@@ -187,7 +179,7 @@ class YQTDndSensor(CoordinatorEntity[YQTDndSettingsCoordinator], SensorEntity):
         return attributes
 
     def _periods(self) -> list[DndPeriod] | None:
-        raw = self.coordinator.data.get(self._did)
+        raw = (self.coordinator.data or {}).get(self._did)
         if raw is None:
             return None
         return extract_dnd_periods(raw)

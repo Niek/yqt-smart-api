@@ -245,18 +245,16 @@ Observed quirks:
 
 ### Shared settings and Do Not Disturb
 
-Traced from APK `1.1.5` (version code 16) during
-[issue #13](https://github.com/Niek/yqt-smart-api/issues/13), while
-investigating whether the Do Not Disturb / quiet-hours schedule could be
-exposed through Home Assistant. Both the write (`yqt.set_dnd_schedule` /
-`set-dnd`) and read (`v2_findSetInfo` / the DND sensor) sides were confirmed
-against a live device on 2026-10-08, including that the watch does support
-the full `MAX_DND_PERIODS = 4` schedule slots this code assumed.
+Traced from APK `1.1.5` (version code 16). [Kasperbi's implementation and
+live-device report](https://github.com/Niek/yqt-smart-api/issues/13#issuecomment-6066936144)
+provided the initial client, CLI, action and sensor: writes appeared in the
+phone app, the sensor read them back, and all four slots were supported.
+This is not independent verification of watch enforcement or overnight behavior.
 
 | Operation | Method and path | Endpoint-specific inner parameters | Evidence |
 | --- | --- | --- | --- |
-| Shared settings read (DND schedule, SOS numbers, SMS alerts, etc.) | `GET /app/{sid}/S10APP/v2_findSetInfo` | `did`, `did_id` | Live-confirmed 2026-10-08 (DND fields only; other settings groups still APK-only) |
-| DND schedule write (current-generation, `DC == 2`) | `POST /S10APP/upNewDndSetInfo` | `sid`, `did`, `did_id`, four `new_dndN` periods, four `new_dndN_open` flags | Live-confirmed 2026-10-08 |
+| Shared settings read (DND schedule, SOS numbers, SMS alerts, etc.) | `GET /app/{sid}/S10APP/v2_findSetInfo` | `did`, `did_id` | Contributor-reported readback (DND only) |
+| DND schedule write (current-generation, `DC == 2`) | `POST /S10APP/upNewDndSetInfo` | `sid`, `did`, `did_id`, four `new_dndN` periods, four `new_dndN_open` flags | Contributor-reported write/readback |
 
 `upNewDndSetInfo` is a root-level endpoint -- it is **not** prefixed with
 `/app/{sid}`, unlike `v2_findSetInfo` and most other calls in this document.
@@ -264,10 +262,30 @@ the full `MAX_DND_PERIODS = 4` schedule slots this code assumed.
 Each `new_dndN` period is formatted `HH:mm-HH:mm-xxxxxxx`, where the trailing
 7-character bitmap orders weekdays Sunday first (`0111110` = Monday through
 Friday). The matching `new_dndN_open` flag is `"2"` for enabled and `"1"` for
-disabled; a disabled slot's period string is conventionally
-`00:00-00:00-0000000`. Up to four periods are supported per watch.
+disabled. Disabling a configured slot preserves its times and weekdays;
+`00:00-00:00-0000000` is the empty-slot sentinel. The action replaces the
+complete schedule, pads unused slots with that sentinel and refreshes settings
+after a successful write (`status=1`). An explicit empty list clears all slots.
 
-Older-generation watches reportedly use a different flow instead: send `D20`
+APK evidence used for the upstream implementation:
+
+- `DeviceParseUtils` (`com.tgelec.aqsh.utils.l`) reads `DC` from the device
+  configuration's underscore-separated `KEY:value` pairs. `DndActivity1.B8`
+  selects the four-slot flow only for `DC == 2`; unknown/legacy capabilities
+  are not supported by this setter or sensor.
+- `DndActivity1.D8` sends each period string independently from its `2`/`1`
+  enable flag. `DndChooseDateActivity.E8` requires start < end and at least
+  one weekday; the selector serializes Sunday first. Overnight windows are
+  therefore rejected rather than inferred from server acceptance.
+- `SettingResponse` contains a list of settings objects, with four
+  `new_dndN` strings and integer `new_dndN_open` flags. Invalid or incomplete
+  schedules remain unknown, not off. Only DND fields are exposed by the HA
+  sensor; the generic settings response also contains phone numbers.
+- Retrofit interface `f7.a.L0` and `DndAction.K3` use the root-level POST
+  above; `DndAction`'s callback accepts `status=1`. The fork also supplies
+  `sid` in the body (not required by the APK's declared fields).
+
+For older-generation watches, the APK uses a different flow: send `D20`
 through `v2_sendOrder`, then, once the command acknowledges with `code=200`,
 save `dnd1`-`dnd3` through a generic `v2_upSetInfo` (`GET
 /app/{sid}/S10APP/v2_upSetInfo`) call. This project only implements the
@@ -408,18 +426,10 @@ last position, and exposes:
 - disabled-by-default Wi-Fi and cell-tower diagnostic sensors
 - a stale-location binary sensor
 - a button that sends `D3` and schedules a later refresh
-- a Do Not Disturb schedule sensor, polled separately and far less often
-  (`YQTDndSettingsCoordinator`, every 30 minutes) from `v2_findSetInfo`,
-  confirmed working live on 2026-10-08; it can still legitimately read
-  "Unknown" on an account/watch where the response doesn't match, and always
-  exposes the raw response as a `raw_find_set_info` attribute so that can be
-  diagnosed.
-- a `yqt.set_dnd_schedule` service (writes the schedule via
-  `YQTApiClient.async_set_dnd_schedule` / `upNewDndSetInfo`), targeting one or
-  more watch devices and taking a `periods` list of `"START-END:DAYS"`
-  strings (the same format as the CLI's `--period`, parsed by
-  `DndPeriod.from_cli_string`). A failed call raises a `HomeAssistantError`
-  with the underlying message; it does not retry or fall back.
+- a Do Not Disturb schedule sensor for `DC == 2` watches, polled independently
+  every 30 minutes, exposing only parsed periods
+- a `yqt.set_dnd_schedule` action for full-schedule replacement, followed by
+  settings refresh; expired-session responses are retried once after login
 
 Installation and user-facing feature documentation belongs in
 [`README.md`](README.md), rather than this protocol reference.

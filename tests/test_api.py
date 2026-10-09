@@ -26,6 +26,7 @@ from custom_components.yqt.core.protocol import (
     compute_sign,
     DEFAULT_CLIENT_VERSION,
     is_login_timeout_response,
+    supports_dnd_schedule,
 )
 from custom_components.yqt.core.sync_client import YQTClient
 from custom_components.yqt.core.transport import (
@@ -46,6 +47,14 @@ def make_watch() -> YQTWatch:
         nickname="John",
         rolename="Parent",
     )
+
+
+def dnd_settings(**overrides):
+    fields = {}
+    for index in range(1, 5):
+        fields[f"new_dnd{index}"] = DISABLED_DND_PERIOD
+        fields[f"new_dnd{index}_open"] = 1
+    return fields | overrides
 
 
 class ApiHelpersTestCase(unittest.TestCase):
@@ -378,12 +387,23 @@ class ApiHelpersTestCase(unittest.TestCase):
 
 
 class DndPeriodTestCase(unittest.TestCase):
-    """DndPeriod formatting, per the APK tracing in GH issue #13 (untested live)."""
+    """DndPeriod formatting and validation match the APK's schedule editor."""
+
+    def test_capability_requires_exact_dc_2(self) -> None:
+        self.assertTrue(supports_dnd_schedule("SOS:1_DC:2_TB:1"))
+        for config in ("", "DC:0", "DC:1", "DC:20", "ADC:2", "DC", "DC:invalid"):
+            with self.subTest(config=config):
+                self.assertFalse(supports_dnd_schedule(config))
+
+    def test_rejects_overnight_equal_and_non_padded_times(self) -> None:
+        for start, end in (("22:00", "07:00"), ("08:00", "08:00"), ("8:00", "15:00")):
+            with self.subTest(start=start, end=end), self.assertRaises(ValueError):
+                DndPeriod(start=start, end=end, weekdays=frozenset({1}))
 
     def test_to_period_string_encodes_weekday_bitmap_sunday_first(self) -> None:
         # Monday-Friday -> "0111110" (Sunday..Saturday, Sunday first).
-        monday_to_friday = DndPeriod(start="22:00", end="07:00", weekdays=frozenset({1, 2, 3, 4, 5}))
-        self.assertEqual(monday_to_friday.to_period_string(), "22:00-07:00-0111110")
+        monday_to_friday = DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))
+        self.assertEqual(monday_to_friday.to_period_string(), "08:00-15:00-0111110")
         self.assertEqual(monday_to_friday.open_flag, "2")
 
         weekend_only = DndPeriod(start="12:00", end="13:00", weekdays=frozenset({0, 6}))
@@ -396,47 +416,74 @@ class DndPeriodTestCase(unittest.TestCase):
 
     def test_enabled_period_requires_at_least_one_weekday(self) -> None:
         with self.assertRaises(ValueError):
-            DndPeriod(start="22:00", end="07:00", weekdays=frozenset())
+            DndPeriod(start="08:00", end="15:00", weekdays=frozenset())
 
     def test_rejects_out_of_range_time_and_weekday(self) -> None:
         with self.assertRaises(ValueError):
-            DndPeriod(start="25:00", end="07:00", weekdays=frozenset({1}))
+            DndPeriod(start="25:00", end="15:00", weekdays=frozenset({1}))
         with self.assertRaises(ValueError):
-            DndPeriod(start="22:00", end="07:99", weekdays=frozenset({1}))
+            DndPeriod(start="08:00", end="07:99", weekdays=frozenset({1}))
         with self.assertRaises(ValueError):
-            DndPeriod(start="22:00", end="07:00", weekdays=frozenset({7}))
+            DndPeriod(start="08:00", end="15:00", weekdays=frozenset({7}))
 
     def test_from_period_string_round_trips_with_to_period_string(self) -> None:
-        original = DndPeriod(start="22:00", end="07:00", weekdays=frozenset({1, 2, 3, 4, 5}))
+        original = DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))
         parsed = DndPeriod.from_period_string(original.to_period_string(), original.open_flag)
         self.assertEqual(parsed, original)
 
-    def test_from_period_string_disabled_flag_ignores_period_text(self) -> None:
-        parsed = DndPeriod.from_period_string("22:00-07:00-0111110", open_flag="1")
-        self.assertEqual(parsed, DndPeriod.disabled())
+    def test_disabled_flag_preserves_saved_times_and_weekdays(self) -> None:
+        parsed = DndPeriod.from_period_string("08:00-15:00-0111110", open_flag="1")
+        self.assertFalse(parsed.enabled)
+        self.assertEqual(parsed.to_period_string(), "08:00-15:00-0111110")
+        self.assertEqual(parsed.weekdays, frozenset({1, 2, 3, 4, 5}))
+        self.assertEqual(parsed.open_flag, "1")
+
+    def test_unknown_flags_and_enabled_empty_slots_are_invalid(self) -> None:
+        for flag in ("0", "3", "None", ""):
+            with self.subTest(flag=flag), self.assertRaises(ValueError):
+                DndPeriod.from_period_string("08:00-15:00-0111110", flag)
+        with self.assertRaises(ValueError):
+            DndPeriod.from_period_string(DISABLED_DND_PERIOD, "2")
 
     def test_from_period_string_rejects_malformed_period(self) -> None:
         with self.assertRaises(ValueError):
             DndPeriod.from_period_string("not-a-period", open_flag="2")
         with self.assertRaises(ValueError):
-            DndPeriod.from_period_string("22:00-07:00-01", open_flag="2")
+            DndPeriod.from_period_string("08:00-15:00-01", open_flag="2")
 
     def test_from_cli_string_parses_start_end_and_days(self) -> None:
-        period = DndPeriod.from_cli_string("22:00-07:00:mon,tue,wed,thu,fri")
+        period = DndPeriod.from_cli_string("08:00-15:00:mon,tue,wed,thu,fri")
         self.assertEqual(
             period,
-            DndPeriod(start="22:00", end="07:00", weekdays=frozenset({1, 2, 3, 4, 5})),
+            DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5})),
         )
 
     def test_from_cli_string_rejects_malformed_input(self) -> None:
         with self.assertRaises(ValueError):
             DndPeriod.from_cli_string("not-a-period")
         with self.assertRaises(ValueError):
-            DndPeriod.from_cli_string("22:00-07:00:mon,notaday")
+            DndPeriod.from_cli_string("08:00-15:00:mon,notaday")
 
 
 class ExtractDndPeriodsTestCase(unittest.TestCase):
-    """extract_dnd_periods's best-effort parse of a (format-unconfirmed) v2_findSetInfo reply."""
+    """Incomplete or malformed replies must never appear to be an off schedule."""
+
+    def test_apk_list_shape_and_integer_flags(self) -> None:
+        fields = dnd_settings(new_dnd1="08:00-15:00-0111110", new_dnd1_open=2)
+        periods = extract_dnd_periods({"status": 1, "data": [fields]})
+        self.assertEqual(len(periods), 4)
+        self.assertTrue(periods[0].enabled)
+        self.assertFalse(periods[1].enabled)
+
+    def test_incomplete_schedule_is_unknown(self) -> None:
+        for key in ("new_dnd4", "new_dnd1_open"):
+            fields = dnd_settings()
+            del fields[key]
+            with self.subTest(key=key):
+                self.assertIsNone(extract_dnd_periods({"data": [fields]}))
+
+    def test_empty_slots_are_a_valid_off_schedule(self) -> None:
+        self.assertEqual(extract_dnd_periods({"data": [dnd_settings()]}), [DndPeriod.disabled()] * 4)
 
     def test_returns_none_when_no_dnd_fields_are_present(self) -> None:
         self.assertIsNone(extract_dnd_periods({"status": 1, "data": {"sos_numbers": []}}))
@@ -444,23 +491,24 @@ class ExtractDndPeriodsTestCase(unittest.TestCase):
     def test_parses_fields_nested_under_data_dict(self) -> None:
         payload = {
             "status": 1,
-            "data": {
-                "new_dnd1": "22:00-07:00-0111110",
+            "data": dnd_settings(**{
+                "new_dnd1": "08:00-15:00-0111110",
                 "new_dnd1_open": "2",
                 "new_dnd2": DISABLED_DND_PERIOD,
                 "new_dnd2_open": "1",
-            },
+            }),
         }
         periods = extract_dnd_periods(payload)
-        self.assertEqual(len(periods), 2)
+        self.assertEqual(len(periods), 4)
         self.assertEqual(
             periods[0],
-            DndPeriod(start="22:00", end="07:00", weekdays=frozenset({1, 2, 3, 4, 5})),
+            DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5})),
         )
         self.assertEqual(periods[1], DndPeriod.disabled())
 
     def test_parses_fields_at_top_level_when_data_is_not_a_dict(self) -> None:
         payload = {
+            **dnd_settings(),
             "status": 1,
             "data": [],
             "new_dnd1": "12:00-13:00-1000001",
@@ -469,21 +517,20 @@ class ExtractDndPeriodsTestCase(unittest.TestCase):
         periods = extract_dnd_periods(payload)
         self.assertEqual(
             periods,
-            [DndPeriod(start="12:00", end="13:00", weekdays=frozenset({0, 6}))],
+            [DndPeriod(start="12:00", end="13:00", weekdays=frozenset({0, 6}))] + [DndPeriod.disabled()] * 3,
         )
 
-    def test_skips_slots_with_unparseable_period_strings(self) -> None:
+    def test_unparseable_slot_makes_entire_schedule_unknown(self) -> None:
         payload = {
-            "data": {
+            "data": dnd_settings(**{
                 "new_dnd1": "garbage",
                 "new_dnd1_open": "2",
-                "new_dnd2": "22:00-07:00-0111110",
+                "new_dnd2": "08:00-15:00-0111110",
                 "new_dnd2_open": "2",
-            },
+            }),
         }
         periods = extract_dnd_periods(payload)
-        self.assertEqual(len(periods), 1)
-        self.assertEqual(periods[0].start, "22:00")
+        self.assertIsNone(periods)
 
 
 class DndScheduleClientTestCase(unittest.TestCase):
@@ -491,8 +538,23 @@ class DndScheduleClientTestCase(unittest.TestCase):
 
     def _client(self) -> YQTClient:
         client = YQTClient(region="europe", session_id="abc123")
-        client._device_index["9505445780"] = {"did": "9505445780", "did_id": "165923436"}
+        client._device_index["9505445780"] = {"did": "9505445780", "did_id": "165923436", "config": "DC:2"}
         return client
+
+    def test_set_rejects_unsupported_or_unknown_capability_before_sending(self) -> None:
+        for config in ("DC:1", "DC:0", ""):
+            client = self._client()
+            client._device_index["9505445780"]["config"] = config
+            with patch.object(client, "_request_json") as request:
+                with self.assertRaisesRegex(YQTError, "DC:2"):
+                    client.set_dnd_schedule(did="9505445780", periods=[])
+                request.assert_not_called()
+
+    def test_write_requires_status_one(self) -> None:
+        client = self._client()
+        with patch.object(client, "_request_json", return_value={"status": 4}):
+            with self.assertRaises(YQTResponseError):
+                client.set_dnd_schedule(did="9505445780", periods=[])
 
     def test_find_set_info_uses_session_scoped_path(self) -> None:
         client = self._client()
@@ -505,7 +567,7 @@ class DndScheduleClientTestCase(unittest.TestCase):
 
     def test_set_dnd_schedule_posts_to_root_level_endpoint(self) -> None:
         client = self._client()
-        periods = [DndPeriod(start="22:00", end="07:00", weekdays=frozenset({1, 2, 3, 4, 5}))]
+        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))]
 
         with patch.object(client, "_request_json", return_value={"status": 1, "message": "ok"}) as mocked:
             client.set_dnd_schedule(did="9505445780", periods=periods)
@@ -517,12 +579,12 @@ class DndScheduleClientTestCase(unittest.TestCase):
         self.assertEqual(params["sid"], "abc123")
         self.assertEqual(params["did"], "9505445780")
         self.assertEqual(params["did_id"], "165923436")
-        self.assertEqual(params["new_dnd1"], "22:00-07:00-0111110")
+        self.assertEqual(params["new_dnd1"], "08:00-15:00-0111110")
         self.assertEqual(params["new_dnd1_open"], "2")
 
     def test_set_dnd_schedule_pads_unused_slots_as_disabled(self) -> None:
         client = self._client()
-        periods = [DndPeriod(start="22:00", end="07:00", weekdays=frozenset({1}))]
+        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1}))]
 
         with patch.object(client, "_request_json", return_value={"status": 1, "message": "ok"}) as mocked:
             client.set_dnd_schedule(did="9505445780", periods=periods)
@@ -544,7 +606,7 @@ class DndScheduleClientTestCase(unittest.TestCase):
 
     def test_set_dnd_schedule_rejects_more_than_four_periods(self) -> None:
         client = self._client()
-        periods = [DndPeriod(start="22:00", end="07:00", weekdays=frozenset({day})) for day in range(5)]
+        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({day})) for day in range(5)]
         with self.assertRaises(YQTError):
             client.set_dnd_schedule(did="9505445780", periods=periods)
 
@@ -663,13 +725,45 @@ class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
         client.session_id = "abc123"
         client._watches["9505445780"] = YQTWatch(
-            did="9505445780", did_id="165923436", model="g36f", nickname="", rolename=""
+            did="9505445780", did_id="165923436", model="g36f", nickname="", rolename="", config="DC:2"
         )
         return client
 
+    async def test_rejects_unsupported_capability_before_sending(self) -> None:
+        client = self._client()
+        client._watches["9505445780"].config = "DC:1"
+        with patch.object(client, "_request_json", new_callable=AsyncMock) as request:
+            with self.assertRaisesRegex(YQTError, "DC:2"):
+                await client.async_set_dnd_schedule("9505445780", [])
+            request.assert_not_awaited()
+
+    async def test_retries_only_expired_session_with_refreshed_credentials(self) -> None:
+        client = self._client()
+
+        async def reauthenticate():
+            client.session_id = "fresh-session"
+
+        with (
+            patch.object(client, "_request_json", new=AsyncMock(side_effect=[
+                {"status": -1, "message": "login timeout"}, {"status": 1}
+            ])) as request,
+            patch.object(client, "_async_reauthenticate", side_effect=reauthenticate) as login,
+        ):
+            await client.async_set_dnd_schedule("9505445780", [])
+        login.assert_awaited_once()
+        self.assertEqual(request.await_count, 2)
+        self.assertEqual(request.call_args.kwargs["data"]["sid"], "fresh-session")
+
+    async def test_rejects_failed_write_without_retry(self) -> None:
+        client = self._client()
+        with patch.object(client, "_request_json", new=AsyncMock(return_value={"status": 4})) as request:
+            with self.assertRaises(YQTResponseError):
+                await client.async_set_dnd_schedule("9505445780", [])
+        request.assert_awaited_once()
+
     async def test_posts_to_root_level_endpoint(self) -> None:
         client = self._client()
-        periods = [DndPeriod(start="22:00", end="07:00", weekdays=frozenset({1, 2, 3, 4, 5}))]
+        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))]
 
         with patch.object(client, "_request_json", new=AsyncMock(return_value={"status": 1})) as mocked:
             await client.async_set_dnd_schedule("9505445780", periods)
@@ -681,7 +775,7 @@ class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["sid"], "abc123")
         self.assertEqual(params["did"], "9505445780")
         self.assertEqual(params["did_id"], "165923436")
-        self.assertEqual(params["new_dnd1"], "22:00-07:00-0111110")
+        self.assertEqual(params["new_dnd1"], "08:00-15:00-0111110")
         self.assertEqual(params["new_dnd1_open"], "2")
         for index in (2, 3, 4):
             self.assertEqual(params[f"new_dnd{index}"], DISABLED_DND_PERIOD)
@@ -689,7 +783,7 @@ class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_more_than_four_periods(self) -> None:
         client = self._client()
-        periods = [DndPeriod(start="22:00", end="07:00", weekdays=frozenset({day})) for day in range(5)]
+        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({day})) for day in range(5)]
         with self.assertRaises(YQTError):
             await client.async_set_dnd_schedule("9505445780", periods)
 

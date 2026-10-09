@@ -24,7 +24,7 @@ from custom_components.yqt.core.protocol import (
 from custom_components.yqt.core.sync_client import YQTClient
 
 def _parse_dnd_period(value: str) -> DndPeriod:
-    """Parse a CLI "--period" value like "22:00-07:00:mon,tue,wed,thu,fri"."""
+    """Parse a CLI "--period" value like "08:00-15:00:mon,tue,wed,thu,fri"."""
     try:
         return DndPeriod.from_cli_string(value)
     except ValueError as exc:
@@ -118,8 +118,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "set-dnd",
         help=(
             "Write the Do Not Disturb schedule for current-generation (DC == 2) watches. "
-            "Traced from APK analysis and confirmed working against a live device "
-            "as of 2026-10-08 -- see REVERSE_ENGINEERING.md and GH issue #13."
+            "Replaces all slots; log in to load capability metadata."
         ),
     )
     set_dnd_parser.add_argument("--did", required=True)
@@ -130,8 +129,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="START-END:DAYS",
         help=(
-            "e.g. 22:00-07:00:mon,tue,wed,thu,fri. Repeat up to 4 times (one per schedule slot). "
-            "Omit entirely to clear/disable the schedule."
+            "e.g. 08:00-15:00:mon,tue,wed,thu,fri. Repeat up to 4 times (one per schedule slot). "
+            "Start must be before end in watch local time. Omit entirely to clear the schedule."
         ),
     )
 

@@ -37,9 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = YQTDataUpdateCoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
 
-    # Unverified endpoint (see YQTDndSettingsCoordinator) -- a plain refresh
-    # rather than async_config_entry_first_refresh(), so it can't block setup
-    # of the rest of the entry if it doesn't work against this account.
+    # Settings failures must not block location setup.
     dnd_coordinator = YQTDndSettingsCoordinator(hass, client, coordinator)
     await dnd_coordinator.async_refresh()
 
@@ -80,19 +78,19 @@ def _async_register_services(hass: HomeAssistant) -> None:
     import voluptuous as vol
     from homeassistant.helpers import config_validation as cv, device_registry as dr
 
-    from .core.protocol import DndPeriod
+    from .core.protocol import MAX_DND_PERIODS, DndPeriod
 
     service_schema = vol.Schema(
         {
-            vol.Required("device_id"): vol.All(cv.ensure_list, [cv.string]),
-            vol.Optional(ATTR_PERIODS, default=[]): vol.All(cv.ensure_list, [cv.string]),
+            vol.Required("device_id"): vol.All(cv.ensure_list, [cv.string], vol.Length(min=1)),
+            vol.Required(ATTR_PERIODS): vol.All(cv.ensure_list, [cv.string], vol.Length(max=MAX_DND_PERIODS)),
         }
     )
 
     async def _async_handle_set_dnd_schedule(call: ServiceCall) -> None:
         from homeassistant.exceptions import HomeAssistantError
 
-        from .core.protocol import YQTAuthError, YQTError
+        from .core.protocol import YQTError
 
         try:
             periods = [DndPeriod.from_cli_string(value) for value in call.data[ATTR_PERIODS]]
@@ -115,8 +113,6 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
             try:
                 await runtime["client"].async_set_dnd_schedule(did, periods)
-            except YQTAuthError as exc:
-                raise HomeAssistantError(str(exc)) from exc
             except YQTError as exc:
                 raise HomeAssistantError(str(exc)) from exc
 
