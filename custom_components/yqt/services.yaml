@@ -1,18 +1,9 @@
 set_dnd_schedule:
-  name: Set Do Not Disturb schedule
-  description: >-
-    Replace all Do Not Disturb schedule slots on a supported watch. Omitted
-    slots are cleared. Pass an empty periods list to clear the schedule.
   target:
     entity:
       integration: yqt
   fields:
     periods:
-      name: Periods
-      description: >-
-        Up to 4 schedule windows, each as "START-END:DAYS", e.g.
-        "08:00-15:00:mon,tue,wed,thu,fri". Times are HH:mm in the watch's local time, with start before end;
-        DAYS is a comma-separated list from sun,mon,tue,wed,thu,fri,sat.
       example: '["08:00-15:00:mon,tue,wed,thu,fri"]'
       required: true
       selector:

@@ -245,66 +245,39 @@ Observed quirks:
 
 ### Shared settings and Do Not Disturb
 
-Traced from APK `1.1.5` (version code 16). [Kasperbi's implementation and
-live-device report](https://github.com/Niek/yqt-smart-api/issues/13#issuecomment-6066936144)
-provided the initial client, CLI, action and sensor: writes appeared in the
-phone app, the sensor read them back, and all four slots were supported.
-This is not independent verification of watch enforcement or overnight behavior.
+APK `1.1.5` (version code 16) uses these DND endpoints:
 
-| Operation | Method and path | Endpoint-specific inner parameters | Evidence |
-| --- | --- | --- | --- |
-| Shared settings read (DND schedule, SOS numbers, SMS alerts, etc.) | `GET /app/{sid}/S10APP/v2_findSetInfo` | `did`, `did_id` | Contributor-reported readback (DND only) |
-| DND schedule write (current-generation, `DC == 2`) | `POST /S10APP/upNewDndSetInfo` | `sid`, `did`, `did_id`, four `new_dndN` periods, four `new_dndN_open` flags | Contributor-reported write/readback |
+| Operation | Method and path | Endpoint-specific inner parameters |
+| --- | --- | --- |
+| Shared settings read | `GET /app/{sid}/S10APP/v2_findSetInfo` | `did`, `did_id` |
+| Four-slot DND write | `POST /S10APP/upNewDndSetInfo` | `sid`, `did`, `did_id`, four `new_dndN` strings and four `new_dndN_open` flags |
 
-`upNewDndSetInfo` is a root-level endpoint -- it is **not** prefixed with
-`/app/{sid}`, unlike `v2_findSetInfo` and most other calls in this document.
+The write endpoint has no `/app/{sid}` prefix. Both use the existing signed,
+encrypted transport. Settings reads also return phone numbers; HA retains
+only parsed DND periods. The CLI exposes the full response for inspection.
 
-Each `new_dndN` period is formatted `HH:mm-HH:mm-xxxxxxx`, where the trailing
-7-character bitmap orders weekdays Sunday first (`0111110` = Monday through
-Friday). The matching `new_dndN_open` flag is `"2"` for enabled and `"1"` for
-disabled. Disabling a configured slot preserves its times and weekdays;
-`00:00-00:00-0000000` is the empty-slot sentinel. The action replaces the
-complete schedule, pads unused slots with that sentinel and refreshes settings
-after a successful write (`status=1`). An explicit empty list clears all slots.
+- `DeviceParseUtils` (`com.tgelec.aqsh.utils.l`) reads underscore-separated
+  `KEY:value` configuration pairs. `DndActivity1.B8` selects this flow only
+  for `DC == 2`; unknown and older watches are excluded.
+- `DndActivity1.D8` sends `HH:mm-HH:mm-xxxxxxx` periods with Sunday-first
+  weekday bits (`0111110` = Monday-Friday), independently of the enabled
+  (`2`) or disabled (`1`) flags. `DndChooseDateActivity.E8` requires start
+  before end and at least one weekday; overnight windows are rejected.
+- `SettingResponse` declares `data` as a list of settings objects.
+  `DndActivity1.F8` checks the empty sentinel `00:00-00:00-0000000` before
+  the flag and treats only `2` as enabled. HA omits empty and switched-off
+  slots; incomplete responses and malformed enabled slots remain unknown.
+- Retrofit `f7.a.L0` and `DndAction.K3` declare the root POST; its callback
+  accepts `status=1`. The client also sends `sid`, as in the contributor's
+  implementation (the APK's declared fields do not require it).
 
-APK evidence used for the upstream implementation:
+Writes replace all four slots, padding unused slots with the empty sentinel
+and flag `1`. An empty list clears the schedule. HA refreshes after success;
+multi-watch updates are sequential and may partially succeed.
 
-- `DeviceParseUtils` (`com.tgelec.aqsh.utils.l`) reads `DC` from the device
-  configuration's underscore-separated `KEY:value` pairs. `DndActivity1.B8`
-  selects the four-slot flow only for `DC == 2`; unknown/legacy capabilities
-  are not supported by this setter or sensor.
-- `DndActivity1.D8` sends each period string independently from its `2`/`1`
-  enable flag. `DndChooseDateActivity.E8` requires start < end and at least
-  one weekday; the selector serializes Sunday first. Overnight windows are
-  therefore rejected rather than inferred from server acceptance.
-- `SettingResponse` contains a list of settings objects, with four
-  `new_dndN` strings and integer `new_dndN_open` flags. `DndActivity1.F8`
-  checks the empty-slot sentinel before the flag, treats only flag `2` as
-  enabled, and tolerates empty/invalid disabled slots.
-  Readback normalizes those disabled defaults; incomplete payloads and corrupt
-  enabled periods remain unknown. Write validation remains strict. Only DND
-  periods are retained by the HA coordinator and exposed by the sensor; the
-  shared response also contains phone numbers. Empty slots are omitted from
-  readback and padded only when writing.
-- Retrofit interface `f7.a.L0` and `DndAction.K3` use the root-level POST
-  above; `DndAction`'s callback accepts `status=1`. The fork also supplies
-  `sid` in the body (not required by the APK's declared fields).
-
-For older-generation watches, the APK uses a different flow: send `D20`
-through `v2_sendOrder`, then, once the command acknowledges with `code=200`,
-save `dnd1`-`dnd3` through a generic `v2_upSetInfo` (`GET
-/app/{sid}/S10APP/v2_upSetInfo`) call. This project only implements the
-current-generation (`DC == 2`) flow so far; see
-[`custom_components/yqt/core/sync_client.py`](custom_components/yqt/core/sync_client.py)'s
-`find_set_info()` and `set_dnd_schedule()`, and
-[`yqt_client.py`](yqt_client.py)'s `find-settings` / `set-dnd` commands.
-
-The same APK trace also described several other settings groups behind
-`v2_findSetInfo` / `v2_upSetInfo` and a generic `v2_upDeviceSwitch` write for
-the switches already covered above (SOS numbers, SMS alerts, location-update
-interval, LBS/Wi-Fi track filters, call/video class-exception lists, device
-removal notices). None of those are implemented here yet; see issue #13 for
-the full trace if you want to pick one up.
+[Issue #13](https://github.com/Niek/yqt-smart-api/issues/13) records the older
+watch flow, other settings and the contributor's app/sensor readback report.
+Watch enforcement has not been independently verified.
 
 ## Commands and feature endpoints
 

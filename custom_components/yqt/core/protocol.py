@@ -36,6 +36,9 @@ DND_OPEN_FLAG_ENABLED = "2"
 DND_OPEN_FLAG_DISABLED = "1"
 DISABLED_DND_PERIOD = "00:00-00:00-0000000"
 DND_WEEKDAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+_DND_TIME = r"(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+_DND_WIRE = re.compile(rf"({_DND_TIME})-({_DND_TIME})-([01]{{7}})")
+_DND_INPUT = re.compile(rf"({_DND_TIME})-({_DND_TIME}):([a-z, ]+)", re.IGNORECASE | re.ASCII)
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,27 +171,18 @@ class YQTWatchState:
 
 @dataclass(frozen=True, slots=True)
 class DndPeriod:
-    """One scheduled Do Not Disturb window for current-generation (DC == 2) watches.
-
-    `weekdays` holds integers 0 (Sunday) through 6 (Saturday), matching
-    the bit order of the `new_dndN` period string the APK sends, e.g. Monday
-    through Friday is encoded as the bitmap "0111110".
-
-    Times use the watch's local clock. Like the APK, only same-day windows
-    are accepted. Enabled means scheduled, not necessarily active right now.
-    """
+    """Enabled window in watch-local time; weekday bits run Sunday (0) to Saturday (6)."""
 
     start: str
     end: str
     weekdays: frozenset[int] = field(default_factory=frozenset)
-    enabled: bool = True
 
     def __post_init__(self) -> None:
-        _validate_time_of_day(self.start)
-        _validate_time_of_day(self.end)
-        invalid_days = {day for day in self.weekdays if day not in range(7)}
-        if invalid_days:
-            raise ValueError(f"weekdays must be 0 (Sunday) through 6 (Saturday), got {sorted(invalid_days)}")
+        # Validate direct construction as well as parsed CLI and wire inputs.
+        if not re.fullmatch(rf"{_DND_TIME}-{_DND_TIME}", f"{self.start}-{self.end}"):
+            raise ValueError("DND times must use HH:mm (00:00 through 23:59)")
+        if not self.weekdays <= frozenset(range(7)):
+            raise ValueError("weekdays must be 0 (Sunday) through 6 (Saturday)")
         if self.start >= self.end:
             raise ValueError("DND start must be before end; overnight periods are not supported")
         if not self.weekdays:
@@ -201,57 +195,31 @@ class DndPeriod:
     def __str__(self) -> str:
         return f"{self.start}-{self.end}:{','.join(self.weekday_names)}"
 
-    @property
-    def open_flag(self) -> str:
-        return DND_OPEN_FLAG_ENABLED if self.enabled else DND_OPEN_FLAG_DISABLED
-
     def to_period_string(self) -> str:
         bitmap = "".join("1" if day in self.weekdays else "0" for day in range(7))
         return f"{self.start}-{self.end}-{bitmap}"
 
     @classmethod
-    def from_period_string(cls, period: str, *, enabled: bool) -> DndPeriod:
-        """Parse the wire format, preserving valid disabled periods."""
-        parts = period.split("-")
-        if len(parts) != 3:
+    def from_period_string(cls, period: str) -> DndPeriod:
+        if not (match := _DND_WIRE.fullmatch(period)):
             raise ValueError(f"invalid DND period string: {period!r}")
-        start, end, bitmap = parts
-        if len(bitmap) != 7 or any(char not in "01" for char in bitmap):
-            raise ValueError(f"invalid DND weekday bitmap: {bitmap!r}")
-        weekdays = frozenset(day for day, flag in enumerate(bitmap) if flag == "1")
-        return cls(start=start, end=end, weekdays=weekdays, enabled=enabled)
+        start, end, bitmap = match.groups()
+        return cls(start, end, frozenset(day for day, flag in enumerate(bitmap) if flag == "1"))
 
     @classmethod
     def parse(cls, value: str) -> DndPeriod:
-        """Parse "START-END:DAYS", e.g. "08:00-15:00:mon,tue,wed,thu,fri".
-
-        Shared by the CLI's `--period` flag (yqt_client.py) and the
-        `set_dnd_schedule` Home Assistant service. Raises ValueError with a
-        human-readable message on anything malformed.
-        """
-        try:
-            time_part, days_part = value.rsplit(":", 1)
-            start, end = time_part.split("-")
-        except ValueError as exc:
-            raise ValueError(
-                f"invalid period {value!r}; expected START-END:DAYS, "
-                "e.g. 08:00-15:00:mon,tue,wed,thu,fri"
-            ) from exc
-
-        weekdays: set[int] = set()
-        for token in days_part.split(","):
-            name = token.strip().lower()
-            if name not in DND_WEEKDAY_NAMES:
-                raise ValueError(
-                    f"invalid weekday {token!r} in period {value!r}; use sun,mon,tue,wed,thu,fri,sat"
-                )
-            weekdays.add(DND_WEEKDAY_NAMES.index(name))
-
-        return cls(start=start, end=end, weekdays=frozenset(weekdays))
+        """Parse START-END:DAYS for the CLI and HA action."""
+        if not (match := _DND_INPUT.fullmatch(value)):
+            raise ValueError(f"invalid period {value!r}; expected HH:mm-HH:mm:mon,tue,...")
+        start, end, days = match.groups()
+        names = {token.strip().lower() for token in days.split(",")}
+        if not names <= set(DND_WEEKDAY_NAMES):
+            raise ValueError(f"invalid weekdays {days!r}; use sun,mon,tue,wed,thu,fri,sat")
+        return cls(start, end, frozenset(DND_WEEKDAY_NAMES.index(name) for name in names))
 
 
 def extract_dnd_periods(payload: dict[str, Any]) -> list[DndPeriod] | None:
-    """Read four slots, tolerating empty disabled defaults but not corrupt enabled slots."""
+    """Read enabled, non-empty slots; incomplete or corrupt enabled schedules are unknown."""
     if not isinstance(payload, dict):
         return None
     source: dict[str, Any] = payload
@@ -266,16 +234,13 @@ def extract_dnd_periods(payload: dict[str, Any]) -> list[DndPeriod] | None:
         if f"new_dnd{index}" not in source or f"new_dnd{index}_open" not in source:
             return None
         period_str = source.get(f"new_dnd{index}")
-        # APK checks the empty-slot sentinel before inspecting the enable flag.
-        if period_str == DISABLED_DND_PERIOD:
+        # APK treats the sentinel as empty and only flag 2 as enabled.
+        if period_str == DISABLED_DND_PERIOD or str(source[f"new_dnd{index}_open"]) != DND_OPEN_FLAG_ENABLED:
             continue
-        # APK DndActivity1.F8: only 2 is enabled; other flags are disabled.
-        enabled = str(source.get(f"new_dnd{index}_open")) == DND_OPEN_FLAG_ENABLED
         try:
-            periods.append(DndPeriod.from_period_string(str(period_str), enabled=enabled))
+            periods.append(DndPeriod.from_period_string(str(period_str)))
         except ValueError:
-            if enabled:
-                return None
+            return None
     return periods
 
 
@@ -284,16 +249,11 @@ def dnd_schedule_fields(periods: Sequence[DndPeriod]) -> dict[str, str]:
     if len(periods) > MAX_DND_PERIODS:
         raise YQTError(f"DND supports at most {MAX_DND_PERIODS} periods, got {len(periods)}")
     fields = {}
-    for index in range(MAX_DND_PERIODS):
-        period = periods[index] if index < len(periods) else None
-        fields[f"new_dnd{index + 1}"] = period.to_period_string() if period else DISABLED_DND_PERIOD
-        fields[f"new_dnd{index + 1}_open"] = period.open_flag if period else DND_OPEN_FLAG_DISABLED
+    slots = [*periods, *[None] * (MAX_DND_PERIODS - len(periods))]
+    for index, period in enumerate(slots, start=1):
+        fields[f"new_dnd{index}"] = period.to_period_string() if period else DISABLED_DND_PERIOD
+        fields[f"new_dnd{index}_open"] = DND_OPEN_FLAG_ENABLED if period else DND_OPEN_FLAG_DISABLED
     return fields
-
-
-def _validate_time_of_day(value: str) -> None:
-    if not re.fullmatch(r"([01][0-9]|2[0-3]):[0-5][0-9]", value):
-        raise ValueError(f"invalid HH:mm time: {value!r}")
 
 
 def supports_dnd_schedule(config: str) -> bool:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin
@@ -184,54 +184,44 @@ class YQTApiClient:
         return response
 
     async def async_find_set_info(self, did: str) -> dict[str, Any]:
-        """Fetch the shared watch-settings payload (DND schedule, SOS numbers, etc.)."""
-        watch = await self._async_ensure_watch(did)
-        response = await self._async_find_set_info_once(watch)
-        if is_login_timeout_response(response):
-            await self._async_reauthenticate()
-            refreshed = self._watches.get(did, watch)
-            response = await self._async_find_set_info_once(refreshed)
+        """Fetch shared settings, including DND, SOS numbers and SMS alerts."""
+        async def send(watch: YQTWatch) -> dict[str, Any]:
+            return await self._request_json(
+                "GET", self._session_path("/S10APP/v2_findSetInfo"),
+                params=self._signed_params({"language": self.language, "did_id": watch.did_id, "did": watch.did}),
+            )
+
+        response = await self._async_watch_request(did, send)
         self._ensure_status(response, SUCCESS_STATUSES)
         return response
 
-    async def _async_find_set_info_once(self, watch: YQTWatch) -> dict[str, Any]:
-        payload = self._signed_params(
-            {
-                "language": self.language,
-                "did_id": watch.did_id,
-                "did": watch.did,
-            }
-        )
-        return await self._request_json(
-            "GET",
-            self._session_path("/S10APP/v2_findSetInfo"),
-            params=payload,
-        )
-
     async def async_set_dnd_schedule(self, did: str, periods: Sequence[DndPeriod]) -> dict[str, Any]:
-        """Replace the DC == 2 schedule, clearing unused slots; retry an expired session once."""
+        """Replace the DC == 2 schedule, clearing unused slots."""
         fields = dnd_schedule_fields(periods)
-        watch = await self._async_ensure_watch(did)
-        response = await self._async_set_dnd_schedule_once(watch, fields)
-        if is_login_timeout_response(response):
-            await self._async_reauthenticate()
-            watch = await self._async_ensure_watch(did)
-            response = await self._async_set_dnd_schedule_once(watch, fields)
+
+        async def send(watch: YQTWatch) -> dict[str, Any]:
+            if not supports_dnd_schedule(watch.config):
+                raise YQTError("DND schedule writing requires a watch advertising DC:2")
+            return await self._request_json(
+                "POST", "/S10APP/upNewDndSetInfo", data=self._signed_params({
+                    "sid": self.session_id, "did": watch.did, "did_id": watch.did_id,
+                    "language": self.language, **fields,
+                }),
+            )
+
+        response = await self._async_watch_request(did, send)
         self._ensure_status(response, {1})
         return response
 
-    async def _async_set_dnd_schedule_once(self, watch: YQTWatch, fields: dict[str, str]) -> dict[str, Any]:
-        if not supports_dnd_schedule(watch.config):
-            raise YQTError("DND schedule writing requires a watch advertising DC:2")
-        payload: dict[str, Any] = {
-            "sid": self.session_id,
-            "did": watch.did,
-            "did_id": watch.did_id,
-            "language": self.language,
-            **fields,
-        }
-
-        return await self._request_json("POST", "/S10APP/upNewDndSetInfo", data=self._signed_params(payload))
+    async def _async_watch_request(
+        self, did: str, send: Callable[[YQTWatch], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Send with current watch metadata, retrying an expired session once."""
+        response = await send(await self._async_ensure_watch(did))
+        if is_login_timeout_response(response):
+            await self._async_reauthenticate()
+            response = await send(await self._async_ensure_watch(did))
+        return response
 
     async def _async_ensure_watch(self, did: str, *, require_model: bool = False) -> YQTWatch:
         if did not in self._watches or not self.session_id:

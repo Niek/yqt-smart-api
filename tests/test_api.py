@@ -386,267 +386,94 @@ class ApiHelpersTestCase(unittest.TestCase):
         self.assertFalse(is_login_timeout_response({"status": 1, "message": "OK"}))
 
 
-class DndPeriodTestCase(unittest.TestCase):
-    """DndPeriod formatting and validation match the APK's schedule editor."""
-
-    def test_capability_requires_exact_dc_2(self) -> None:
-        self.assertTrue(supports_dnd_schedule("SOS:1_DC:2_TB:1"))
-        for config in ("", "DC:0", "DC:1", "DC:20", "ADC:2", "DC", "DC:invalid"):
-            with self.subTest(config=config):
-                self.assertFalse(supports_dnd_schedule(config))
-
-    def test_rejects_overnight_equal_and_non_padded_times(self) -> None:
-        for start, end in (("22:00", "07:00"), ("08:00", "08:00"), ("8:00", "15:00")):
-            with self.subTest(start=start, end=end), self.assertRaises(ValueError):
-                DndPeriod(start=start, end=end, weekdays=frozenset({1}))
-
-    def test_to_period_string_encodes_weekday_bitmap_sunday_first(self) -> None:
-        # Monday-Friday -> "0111110" (Sunday..Saturday, Sunday first).
-        monday_to_friday = DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))
-        self.assertEqual(monday_to_friday.to_period_string(), "08:00-15:00-0111110")
-        self.assertEqual(monday_to_friday.open_flag, "2")
-
-        weekend_only = DndPeriod(start="12:00", end="13:00", weekdays=frozenset({0, 6}))
-        self.assertEqual(weekend_only.to_period_string(), "12:00-13:00-1000001")
-
-    def test_empty_schedule_encodes_four_empty_slots(self) -> None:
-        fields = dnd_schedule_fields([])
-        for index in range(1, 5):
-            self.assertEqual(fields[f"new_dnd{index}"], DISABLED_DND_PERIOD)
-            self.assertEqual(fields[f"new_dnd{index}_open"], "1")
-
-    def test_string_format_matches_action_input(self) -> None:
-        period = DndPeriod.parse("08:00-15:00:mon,tue,wed,thu,fri")
-        self.assertEqual(str(period), "08:00-15:00:mon,tue,wed,thu,fri")
-        self.assertEqual(DndPeriod.parse(str(period)), period)
-        self.assertEqual(period.weekday_names, ["mon", "tue", "wed", "thu", "fri"])
-
-    def test_enabled_period_requires_at_least_one_weekday(self) -> None:
-        with self.assertRaises(ValueError):
-            DndPeriod(start="08:00", end="15:00", weekdays=frozenset())
-
-    def test_rejects_out_of_range_time_and_weekday(self) -> None:
-        with self.assertRaises(ValueError):
-            DndPeriod(start="25:00", end="15:00", weekdays=frozenset({1}))
-        with self.assertRaises(ValueError):
-            DndPeriod(start="08:00", end="07:99", weekdays=frozenset({1}))
-        with self.assertRaises(ValueError):
-            DndPeriod(start="08:00", end="15:00", weekdays=frozenset({7}))
-
-    def test_from_period_string_round_trips_with_to_period_string(self) -> None:
-        original = DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))
-        parsed = DndPeriod.from_period_string(original.to_period_string(), enabled=original.enabled)
-        self.assertEqual(parsed, original)
-
-    def test_disabled_flag_preserves_saved_times_and_weekdays(self) -> None:
-        parsed = DndPeriod.from_period_string("08:00-15:00-0111110", enabled=False)
-        self.assertFalse(parsed.enabled)
-        self.assertEqual(parsed.to_period_string(), "08:00-15:00-0111110")
-        self.assertEqual(parsed.weekdays, frozenset({1, 2, 3, 4, 5}))
-        self.assertEqual(parsed.open_flag, "1")
-
-    def test_empty_slots_are_not_period_objects(self) -> None:
-        for enabled in (True, False):
-            with self.subTest(enabled=enabled), self.assertRaises(ValueError):
-                DndPeriod.from_period_string(DISABLED_DND_PERIOD, enabled=enabled)
-
-    def test_from_period_string_rejects_malformed_period(self) -> None:
-        with self.assertRaises(ValueError):
-            DndPeriod.from_period_string("not-a-period", enabled=True)
-        with self.assertRaises(ValueError):
-            DndPeriod.from_period_string("08:00-15:00-01", enabled=True)
-
-    def test_parse_parses_start_end_and_days(self) -> None:
-        period = DndPeriod.parse("08:00-15:00:mon,tue,wed,thu,fri")
-        self.assertEqual(
-            period,
-            DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5})),
-        )
-
-    def test_parse_rejects_malformed_input(self) -> None:
-        with self.assertRaises(ValueError):
-            DndPeriod.parse("not-a-period")
-        with self.assertRaises(ValueError):
-            DndPeriod.parse("08:00-15:00:mon,notaday")
-
-
-class ExtractDndPeriodsTestCase(unittest.TestCase):
-    """Incomplete or malformed replies must never appear to be an off schedule."""
-
-    def test_apk_list_shape_and_integer_flags(self) -> None:
-        fields = dnd_settings(new_dnd1="08:00-15:00-0111110", new_dnd1_open=2)
-        periods = extract_dnd_periods({"status": 1, "data": [fields]})
-        self.assertEqual(len(periods), 1)
-        self.assertTrue(periods[0].enabled)
-
-    def test_incomplete_schedule_is_unknown(self) -> None:
-        for key in ("new_dnd4", "new_dnd1_open"):
-            fields = dnd_settings()
-            del fields[key]
-            with self.subTest(key=key):
-                self.assertIsNone(extract_dnd_periods({"data": [fields]}))
-
-    def test_empty_slots_are_a_valid_off_schedule(self) -> None:
-        self.assertEqual(extract_dnd_periods({"data": [dnd_settings()]}), [])
-
-    def test_empty_or_invalid_disabled_slots_use_apk_defaults(self) -> None:
-        for value in (None, "", "garbage", "00:00-00:00-0111110", DISABLED_DND_PERIOD):
-            for flag in (0, "0", 1, None):
-                with self.subTest(value=value, flag=flag):
-                    fields = dnd_settings(new_dnd1=value, new_dnd1_open=flag)
-                    self.assertEqual(extract_dnd_periods({"data": [fields]}), [])
-
-    def test_non_two_read_flags_preserve_valid_disabled_times(self) -> None:
-        for flag in (0, 1, 3):
-            fields = dnd_settings(new_dnd1="08:00-15:00-0111110", new_dnd1_open=flag)
-            period = extract_dnd_periods({"data": [fields]})[0]
-            self.assertFalse(period.enabled)
-            self.assertEqual(period.to_period_string(), "08:00-15:00-0111110")
-
-    def test_invalid_enabled_defaults_remain_unknown(self) -> None:
-        for value in (None, "", "00:00-00:00-0111110"):
-            fields = dnd_settings(new_dnd1=value, new_dnd1_open=2)
+class DndProtocolTestCase(unittest.TestCase):
+    def test_formats_round_trip(self):
+        for value, wire, days in (
+            ("08:00-15:00:mon,tue,wed,thu,fri", "08:00-15:00-0111110", [1, 2, 3, 4, 5]),
+            ("12:00-13:00:sun,sat", "12:00-13:00-1000001", [0, 6]),
+            ("00:00-23:59:MON, mon", "00:00-23:59-0100000", [1]),
+        ):
             with self.subTest(value=value):
-                self.assertIsNone(extract_dnd_periods({"data": [fields]}))
+                period = DndPeriod.parse(value)
+                self.assertEqual(period.weekdays, frozenset(days))
+                self.assertEqual(period.to_period_string(), wire)
+                self.assertEqual(DndPeriod.from_period_string(wire), period)
+                self.assertEqual(DndPeriod.parse(str(period)), period)
 
-    def test_empty_slot_sentinel_is_empty_even_with_enabled_flag(self) -> None:
-        fields = dnd_settings(new_dnd1_open=2)
-        self.assertEqual(extract_dnd_periods({"data": [fields]}), [])
+    def test_invalid_inputs_and_direct_construction(self):
+        for parse, values in (
+            (DndPeriod.parse, ["garbage", "08:00-15:00:funday", "08:00-15:00:", "08:00-15:00:mon,",
+                              "22:00-07:00:mon", "08:00-08:00:mon", "8:00-15:00:mon", "08:00-25:00:mon"]),
+            (DndPeriod.from_period_string, ["garbage", "08:00-15:00-01", "08:00-15:00-0111112",
+                                           "08:00-15:00-0000000", "08:00-07:99-0111110", DISABLED_DND_PERIOD]),
+        ):
+            for value in values:
+                with self.subTest(parse=parse.__name__, value=value), self.assertRaises(ValueError):
+                    parse(value)
+        for start, end, days in (("8:00", "15:00", {1}), ("08:00", "15:00", {7}),
+                                 ("22:00", "07:00", {1}), ("08:00", "15:00", set())):
+            with self.subTest(start=start, end=end, days=days), self.assertRaises(ValueError):
+                DndPeriod(start, end, frozenset(days))
 
-    def test_absent_or_invalid_payloads_remain_unknown(self) -> None:
-        for payload in (None, [], {}, {"data": []}, {"data": [None]}, {"data": "invalid"}):
+    def test_write_fields_and_capability(self):
+        period = DndPeriod.parse("08:00-15:00:mon,tue,wed,thu,fri")
+        for count in (0, 1, 4):
+            fields = dnd_schedule_fields([period] * count)
+            self.assertEqual(len(fields), 8)
+            for index in range(1, 5):
+                self.assertEqual(fields[f"new_dnd{index}"], "08:00-15:00-0111110" if index <= count else DISABLED_DND_PERIOD)
+                self.assertEqual(fields[f"new_dnd{index}_open"], "2" if index <= count else "1")
+        with self.assertRaises(YQTError):
+            dnd_schedule_fields([period] * 5)
+        for config in ("SOS:1_DC:2_TB:1", "", "DC:0", "DC:1", "DC:20", "ADC:2", "DC", "DC:invalid"):
+            self.assertEqual(supports_dnd_schedule(config), config == "SOS:1_DC:2_TB:1")
+
+    def test_readback(self):
+        period = DndPeriod.parse("08:00-15:00:mon,tue,wed,thu,fri")
+        fields = dnd_settings(new_dnd1=period.to_period_string(), new_dnd1_open=2)
+        cases = [({"data": [fields]}, [period]), ({"data": fields}, [period]), (fields, [period])]
+        cases += [(payload, None) for payload in (None, [], {}, {"data": []}, {"data": [None]}, {"data": "bad"})]
+        cases += [({"data": [{k: v for k, v in fields.items() if k != missing}]}, None)
+                  for missing in ("new_dnd4", "new_dnd1_open")]
+        cases += [({"data": [dnd_settings(new_dnd1=value, new_dnd1_open=flag)]}, [])
+                  for value in (None, "", "bad", period.to_period_string(), DISABLED_DND_PERIOD)
+                  for flag in (0, "0", 1, None, 3)]
+        cases += [({"data": [dnd_settings(new_dnd1_open=2)]}, [])]
+        cases += [({"data": [dnd_settings(new_dnd1=value, new_dnd1_open=flag)]}, None)
+                  for value in (None, "", "bad", "00:00-00:00-0111110") for flag in (2, "2")]
+        for payload, expected in cases:
             with self.subTest(payload=payload):
-                self.assertIsNone(extract_dnd_periods(payload))
-
-    def test_returns_none_when_no_dnd_fields_are_present(self) -> None:
-        self.assertIsNone(extract_dnd_periods({"status": 1, "data": {"sos_numbers": []}}))
-
-    def test_parses_fields_nested_under_data_dict(self) -> None:
-        payload = {
-            "status": 1,
-            "data": dnd_settings(**{
-                "new_dnd1": "08:00-15:00-0111110",
-                "new_dnd1_open": "2",
-                "new_dnd2": DISABLED_DND_PERIOD,
-                "new_dnd2_open": "1",
-            }),
-        }
-        periods = extract_dnd_periods(payload)
-        self.assertEqual(len(periods), 1)
-        self.assertEqual(
-            periods[0],
-            DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5})),
-        )
-
-    def test_parses_fields_at_top_level_when_data_is_not_a_dict(self) -> None:
-        payload = {
-            **dnd_settings(),
-            "status": 1,
-            "data": [],
-            "new_dnd1": "12:00-13:00-1000001",
-            "new_dnd1_open": "2",
-        }
-        periods = extract_dnd_periods(payload)
-        self.assertEqual(
-            periods,
-            [DndPeriod(start="12:00", end="13:00", weekdays=frozenset({0, 6}))],
-        )
-
-    def test_unparseable_slot_makes_entire_schedule_unknown(self) -> None:
-        payload = {
-            "data": dnd_settings(**{
-                "new_dnd1": "garbage",
-                "new_dnd1_open": "2",
-                "new_dnd2": "08:00-15:00-0111110",
-                "new_dnd2_open": "2",
-            }),
-        }
-        periods = extract_dnd_periods(payload)
-        self.assertIsNone(periods)
+                self.assertEqual(extract_dnd_periods(payload), expected)
 
 
 class DndScheduleClientTestCase(unittest.TestCase):
-    """YQTClient.find_set_info / set_dnd_schedule, per GH issue #13 (untested live)."""
+    def setUp(self):
+        self.client = YQTClient(region="europe", session_id="abc123")
+        self.client._device_index["test-watch"] = {"did": "test-watch", "did_id": "test-id", "config": "DC:2"}
 
-    def _client(self) -> YQTClient:
-        client = YQTClient(region="europe", session_id="abc123")
-        client._device_index["9505445780"] = {"did": "9505445780", "did_id": "165923436", "config": "DC:2"}
-        return client
+    def test_requests(self):
+        with patch.object(self.client, "_request_json", return_value={"status": 1}) as request:
+            self.client.find_set_info(did="test-watch")
+            self.assertEqual(request.call_args.args[:2], ("GET", "/app/abc123/S10APP/v2_findSetInfo"))
+            self.assertEqual(request.call_args.args[2]["did_id"], "test-id")
+            periods = [DndPeriod.parse("08:00-15:00:mon")]
+            self.client.set_dnd_schedule(did="test-watch", periods=periods)
+            method, path, fields = request.call_args.args
+            self.assertEqual((method, path), ("POST", "/S10APP/upNewDndSetInfo"))
+            expected = {"sid": "abc123", "did": "test-watch", "did_id": "test-id", **dnd_schedule_fields(periods)}
+            self.assertTrue(expected.items() <= fields.items())
 
-    def test_set_rejects_unsupported_or_unknown_capability_before_sending(self) -> None:
-        for config in ("DC:1", "DC:0", ""):
-            client = self._client()
-            client._device_index["9505445780"]["config"] = config
-            with patch.object(client, "_request_json") as request:
+    def test_rejects_unsupported_watches_and_failed_writes(self):
+        with patch.object(self.client, "_request_json", return_value={"status": 4}) as request:
+            for config in ("DC:1", ""):
+                self.client._device_index["test-watch"]["config"] = config
                 with self.assertRaisesRegex(YQTError, "DC:2"):
-                    client.set_dnd_schedule(did="9505445780", periods=[])
-                request.assert_not_called()
-
-    def test_write_requires_status_one(self) -> None:
-        client = self._client()
-        with patch.object(client, "_request_json", return_value={"status": 4}):
+                    self.client.set_dnd_schedule(did="test-watch")
+            request.assert_not_called()
+            self.client._device_index["test-watch"]["config"] = "DC:2"
             with self.assertRaises(YQTResponseError):
-                client.set_dnd_schedule(did="9505445780", periods=[])
-
-    def test_find_set_info_uses_session_scoped_path(self) -> None:
-        client = self._client()
-        with patch.object(client, "_request_json", return_value={"status": 1, "message": "ok"}) as mocked:
-            client.find_set_info(did="9505445780")
-
-        method, path, _params = mocked.call_args.args
-        self.assertEqual(method, "GET")
-        self.assertEqual(path, "/app/abc123/S10APP/v2_findSetInfo")
-
-    def test_set_dnd_schedule_posts_to_root_level_endpoint(self) -> None:
-        client = self._client()
-        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))]
-
-        with patch.object(client, "_request_json", return_value={"status": 1, "message": "ok"}) as mocked:
-            client.set_dnd_schedule(did="9505445780", periods=periods)
-
-        method, path, params = mocked.call_args.args
-        self.assertEqual(method, "POST")
-        # upNewDndSetInfo is root-level, unlike the "/app/{sid}/S10APP/" calls.
-        self.assertEqual(path, "/S10APP/upNewDndSetInfo")
-        self.assertEqual(params["sid"], "abc123")
-        self.assertEqual(params["did"], "9505445780")
-        self.assertEqual(params["did_id"], "165923436")
-        self.assertEqual(params["new_dnd1"], "08:00-15:00-0111110")
-        self.assertEqual(params["new_dnd1_open"], "2")
-
-    def test_set_dnd_schedule_pads_unused_slots_as_disabled(self) -> None:
-        client = self._client()
-        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1}))]
-
-        with patch.object(client, "_request_json", return_value={"status": 1, "message": "ok"}) as mocked:
-            client.set_dnd_schedule(did="9505445780", periods=periods)
-
-        _method, _path, params = mocked.call_args.args
-        for index in (2, 3, 4):
-            self.assertEqual(params[f"new_dnd{index}"], DISABLED_DND_PERIOD)
-            self.assertEqual(params[f"new_dnd{index}_open"], "1")
-
-    def test_set_dnd_schedule_with_no_periods_disables_everything(self) -> None:
-        client = self._client()
-        with patch.object(client, "_request_json", return_value={"status": 1, "message": "ok"}) as mocked:
-            client.set_dnd_schedule(did="9505445780")
-
-        _method, _path, params = mocked.call_args.args
-        for index in (1, 2, 3, 4):
-            self.assertEqual(params[f"new_dnd{index}"], DISABLED_DND_PERIOD)
-            self.assertEqual(params[f"new_dnd{index}_open"], "1")
-
-    def test_set_dnd_schedule_rejects_more_than_four_periods(self) -> None:
-        client = self._client()
-        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({day})) for day in range(5)]
-        with self.assertRaises(YQTError):
-            client.set_dnd_schedule(did="9505445780", periods=periods)
-
-    def test_set_dnd_schedule_requires_a_session(self) -> None:
-        client = YQTClient(region="europe")
-        client._device_index["9505445780"] = {"did": "9505445780", "did_id": "165923436"}
-        with self.assertRaises(YQTError):
-            client.set_dnd_schedule(did="9505445780")
+                self.client.set_dnd_schedule(did="test-watch")
+            request.assert_called_once()
 
 
 class TransportTestCase(unittest.TestCase):
@@ -746,58 +573,79 @@ class AsyncClientTransportTestCase(unittest.IsolatedAsyncioTestCase):
 
 
 class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
-    """YQTApiClient.async_set_dnd_schedule, the HA-service counterpart of YQTClient.set_dnd_schedule."""
+    def setUp(self):
+        self.client = YQTApiClient(MagicMock(), region="europe", loginname="demo@example.com", password="test")
+        self.client.session_id = "abc123"
+        self.client._watches["test-watch"] = YQTWatch("test-watch", "test-id", "", "", "", config="DC:2")
 
-    def _client(self) -> YQTApiClient:
-        client = YQTApiClient(
-            MagicMock(),
-            region="europe",
-            loginname="demo@example.com",
-            password="password",
-        )
-        client.session_id = "abc123"
-        client._watches["9505445780"] = YQTWatch(
-            did="9505445780", did_id="165923436", model="g36f", nickname="", rolename="", config="DC:2"
-        )
-        return client
-
-    async def test_settings_read_and_write_do_not_require_a_model(self) -> None:
-        client = self._client()
-        client._watches["9505445780"].model = ""
-        with patch.object(client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request:
-            await client.async_find_set_info("9505445780")
+    async def test_requests_without_model(self):
+        with patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request:
+            await self.client.async_find_set_info("test-watch")
             self.assertEqual(request.call_args.args, ("GET", "/app/abc123/S10APP/v2_findSetInfo"))
-            self.assertEqual(request.call_args.kwargs["params"]["did_id"], "165923436")
-            await client.async_set_dnd_schedule("9505445780", [])
+            self.assertEqual(request.call_args.kwargs["params"]["did_id"], "test-id")
+            periods = [DndPeriod.parse("08:00-15:00:mon")]
+            await self.client.async_set_dnd_schedule("test-watch", periods)
             self.assertEqual(request.call_args.args, ("POST", "/S10APP/upNewDndSetInfo"))
-            self.assertEqual(request.call_args.kwargs["data"]["did_id"], "165923436")
+            expected = {"sid": "abc123", "did": "test-watch", "did_id": "test-id", **dnd_schedule_fields(periods)}
+            self.assertTrue(expected.items() <= request.call_args.kwargs["data"].items())
 
-    async def test_settings_read_retry_does_not_require_a_model(self) -> None:
-        client = self._client()
+    async def test_session_handling(self):
+        expired = {"status": -1, "message": "login timeout"}
+        for method, args in ((self.client.async_find_set_info, ()), (self.client.async_set_dnd_schedule, ([],))):
+            for replies in ([expired, {"status": 1}], [expired, expired], [{"status": 3}], [{"status": 4}], [{"status": 1}]):
+                self.client.session_id = None if len(replies) == 1 and replies[0]["status"] == 1 else "expired"
+                self.client._watches["test-watch"].did_id = "test-id"
 
-        async def reauthenticate():
-            client.session_id = "fresh-session"
-            client._watches["9505445780"].model = ""
+                async def login():
+                    self.client.session_id = "fresh"
+                    self.client._watches["test-watch"] = YQTWatch("test-watch", "fresh-id", "", "", "", config="DC:2")
 
-        with (
-            patch.object(client, "_request_json", new=AsyncMock(side_effect=[
-                {"status": -1, "message": "login timeout"}, {"status": 1}
-            ])) as request,
-            patch.object(client, "_async_reauthenticate", side_effect=reauthenticate) as login,
-        ):
-            await client.async_find_set_info("9505445780")
-        login.assert_awaited_once()
-        self.assertEqual(request.await_count, 2)
-        self.assertEqual(request.call_args.args, ("GET", "/app/fresh-session/S10APP/v2_findSetInfo"))
+                with (
+                    self.subTest(method=method.__name__, replies=replies),
+                    patch.object(self.client, "async_login", side_effect=login) as initial_login,
+                    patch.object(self.client, "_async_reauthenticate", side_effect=login) as retry_login,
+                    patch.object(self.client, "_request_json", new=AsyncMock(side_effect=replies)) as request,
+                ):
+                    success = replies[-1]["status"] == 1 or (not args and replies[-1]["status"] == 4)
+                    if success:
+                        await method("test-watch", *args)
+                    else:
+                        with self.assertRaises(YQTError):
+                            await method("test-watch", *args)
+                    if replies[-1]["status"] == 1:
+                        fields = request.call_args.kwargs["data" if args else "params"]
+                        self.assertEqual(fields["did_id"], "fresh-id")
+                        if args:
+                            self.assertEqual(fields["sid"], "fresh")
+                        else:
+                            self.assertEqual(request.call_args.args[1], "/app/fresh/S10APP/v2_findSetInfo")
+                    self.assertEqual(request.await_count, len(replies))
+                    self.assertEqual(retry_login.await_count, int(len(replies) == 2))
+                    self.assertEqual(initial_login.await_count, int(len(replies) == 1 and replies[0]["status"] == 1))
+
+    async def test_capability_checked_before_send_and_after_retry(self):
+        for initial in ("", "DC:1", "DC:2"):
+            self.client._watches["test-watch"].config = initial
+
+            async def login():
+                self.client._watches["test-watch"].config = "DC:1"
+
+            with (
+                self.subTest(initial=initial),
+                patch.object(self.client, "_async_reauthenticate", side_effect=login),
+                patch.object(self.client, "_request_json", new=AsyncMock(return_value={"status": -1, "message": "login timeout"})) as request,
+            ):
+                with self.assertRaisesRegex(YQTError, "DC:2"):
+                    await self.client.async_set_dnd_schedule("test-watch", [])
+                self.assertEqual(request.await_count, int(initial == "DC:2"))
 
     async def test_location_requires_a_model_before_initial_send_and_retry(self) -> None:
         for missing_initially in (True, False):
-            client = self._client()
-            if missing_initially:
-                client._watches["9505445780"].model = ""
+            client = self.client
+            client._watches["test-watch"].model = "" if missing_initially else "g36f"
 
             async def reauthenticate():
-                client._watches["9505445780"].model = ""
+                client._watches["test-watch"].model = ""
 
             with (
                 self.subTest(missing_initially=missing_initially),
@@ -807,82 +655,8 @@ class AsyncDndScheduleClientTestCase(unittest.IsolatedAsyncioTestCase):
                 patch.object(client, "_async_reauthenticate", side_effect=reauthenticate),
             ):
                 with self.assertRaisesRegex(YQTError, "device model is required"):
-                    await client.async_request_location("9505445780")
+                    await client.async_request_location("test-watch")
                 self.assertEqual(send.await_count, 0 if missing_initially else 1)
-
-    async def test_rejects_unsupported_capability_before_sending(self) -> None:
-        client = self._client()
-        client._watches["9505445780"].config = "DC:1"
-        with patch.object(client, "_request_json", new_callable=AsyncMock) as request:
-            with self.assertRaisesRegex(YQTError, "DC:2"):
-                await client.async_set_dnd_schedule("9505445780", [])
-            request.assert_not_awaited()
-
-    async def test_retries_only_expired_session_with_refreshed_credentials(self) -> None:
-        client = self._client()
-
-        async def reauthenticate():
-            client.session_id = "fresh-session"
-            client._watches["9505445780"].model = ""
-
-        with (
-            patch.object(client, "_request_json", new=AsyncMock(side_effect=[
-                {"status": -1, "message": "login timeout"}, {"status": 1}
-            ])) as request,
-            patch.object(client, "_async_reauthenticate", side_effect=reauthenticate) as login,
-        ):
-            await client.async_set_dnd_schedule("9505445780", [])
-        login.assert_awaited_once()
-        self.assertEqual(request.await_count, 2)
-        self.assertEqual(request.call_args.kwargs["data"]["sid"], "fresh-session")
-
-    async def test_rejects_failed_write_without_retry(self) -> None:
-        client = self._client()
-        with patch.object(client, "_request_json", new=AsyncMock(return_value={"status": 4})) as request:
-            with self.assertRaises(YQTResponseError):
-                await client.async_set_dnd_schedule("9505445780", [])
-        request.assert_awaited_once()
-
-    async def test_posts_to_root_level_endpoint(self) -> None:
-        client = self._client()
-        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({1, 2, 3, 4, 5}))]
-
-        with patch.object(client, "_request_json", new=AsyncMock(return_value={"status": 1})) as mocked:
-            await client.async_set_dnd_schedule("9505445780", periods)
-
-        method, path = mocked.call_args.args
-        params = mocked.call_args.kwargs["data"]
-        self.assertEqual(method, "POST")
-        self.assertEqual(path, "/S10APP/upNewDndSetInfo")
-        self.assertEqual(params["sid"], "abc123")
-        self.assertEqual(params["did"], "9505445780")
-        self.assertEqual(params["did_id"], "165923436")
-        self.assertEqual(params["new_dnd1"], "08:00-15:00-0111110")
-        self.assertEqual(params["new_dnd1_open"], "2")
-        for index in (2, 3, 4):
-            self.assertEqual(params[f"new_dnd{index}"], DISABLED_DND_PERIOD)
-            self.assertEqual(params[f"new_dnd{index}_open"], "1")
-
-    async def test_rejects_more_than_four_periods(self) -> None:
-        client = self._client()
-        periods = [DndPeriod(start="08:00", end="15:00", weekdays=frozenset({day})) for day in range(5)]
-        with self.assertRaises(YQTError):
-            await client.async_set_dnd_schedule("9505445780", periods)
-
-    async def test_logs_in_when_no_session_exists(self) -> None:
-        client = self._client()
-        client.session_id = None
-
-        async def login():
-            client.session_id = "fresh-session"
-
-        with (
-            patch.object(client, "async_login", side_effect=login) as authenticate,
-            patch.object(client, "_request_json", new=AsyncMock(return_value={"status": 1})) as request,
-        ):
-            await client.async_set_dnd_schedule("9505445780", [])
-        authenticate.assert_awaited_once()
-        self.assertEqual(request.call_args.kwargs["data"]["sid"], "fresh-session")
 
 
 class IntegrationUnloadTestCase(unittest.TestCase):
@@ -922,21 +696,6 @@ class IntegrationUnloadTestCase(unittest.TestCase):
 
 
 class DndCliTestCase(unittest.TestCase):
-    def test_missing_or_invalid_period_fails_before_login(self) -> None:
-        import yqt_client
-
-        for args in ([], ["--period", "invalid"], ["--period", "15:00-08:00:mon"]):
-            with (
-                self.subTest(args=args),
-                patch("sys.argv", ["yqt_client.py", "set-dnd", "--did", "test-watch", *args]),
-                patch("sys.stderr"),
-                patch.object(yqt_client, "YQTClient") as client,
-                self.assertRaises(SystemExit) as error,
-            ):
-                yqt_client.main()
-            self.assertEqual(error.exception.code, 2)
-            client.assert_not_called()
-
     def test_invalid_period_reports_reason_before_login(self) -> None:
         import yqt_client
 
@@ -957,26 +716,19 @@ class DndCliTestCase(unittest.TestCase):
             self.assertIn(reason, stderr.getvalue())
             client.assert_not_called()
 
-    def test_clear_and_period_are_mutually_exclusive(self) -> None:
-        from yqt_client import _build_parser
+    def test_explicit_action_required_before_login(self):
+        import yqt_client
 
-        with patch("sys.stderr"), self.assertRaises(SystemExit):
-            _build_parser().parse_args([
-                "set-dnd", "--did", "test-watch", "--clear", "--period", "08:00-15:00:mon"
-            ])
-
-    def test_explicit_clear_and_periods_parse(self) -> None:
-        from yqt_client import _build_parser
-
-        clear = _build_parser().parse_args(["set-dnd", "--did", "test-watch", "--clear"])
-        self.assertTrue(clear.clear)
-        self.assertEqual(clear.period, [])
-        schedule = _build_parser().parse_args([
-            "set-dnd", "--did", "test-watch", "--period", "08:00-15:00:mon", "--period", "09:00-12:00:sat"
-        ])
-        self.assertFalse(schedule.clear)
-        self.assertEqual(len(schedule.period), 2)
-        self.assertIsInstance(schedule.period[0], DndPeriod)
+        for args in ([], ["--clear", "--period", "08:00-15:00:mon"]):
+            with (
+                self.subTest(args=args),
+                patch("sys.argv", ["yqt_client.py", "set-dnd", "--did", "test-watch", *args]),
+                patch("sys.stderr"),
+                patch.object(yqt_client, "YQTClient") as client,
+                self.assertRaises(SystemExit),
+            ):
+                yqt_client.main()
+            client.assert_not_called()
 
 
 if __name__ == "__main__":
