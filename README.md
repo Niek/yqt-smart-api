@@ -14,6 +14,8 @@ Confirmed working:
 - Tixpc `G31` ([Amazon](https://www.amazon.com/dp/B0DJVSDGT5?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
 - tykjszgs `LT31` ([Amazon](https://www.amazon.com/dp/B0CZ6G69WY?th=1&linkCode=ll2&tag=nivadema-20&language=en_US&ref_=as_li_ss_tl))
 - Wonlex `KT31` ([Wonlex](https://www.iwonlex.net/products/wonlex-4g-amoled-screen-gps-android-8-1-kids-videocall-smartwatch-kt31/))
+- Wonlex `KT37` ([Wonlex](https://www.iwonlex.net/products/kt37-ai-powered-ultra-slim-4g-amoled-gps-smartwatch-with-android---google-play/))
+- `K26` ([AliExpress](https://www.aliexpress.com/item/1005006163649792.html))
 - `GTQ68NO` ([montre-enfant.com](https://www.montre-enfant.com/produit/traceur-gps-enfant-4g-avec-bouton-d-appel-sos-modele-gtq68no))
 - Garett Kids `Vibe AI 4G` ([garett.com.pl](https://garett.com.pl/produkt/smartwatch-garett-kids-vibe-ai-4g-czarny/))
 
