@@ -667,10 +667,10 @@ class IntegrationUnloadTestCase(unittest.TestCase):
 
         class FakeCoordinator:
             def __init__(self) -> None:
-                self.shutdown_called = False
+                self.delayed_refresh_cancelled = False
 
-            def async_shutdown(self) -> None:
-                self.shutdown_called = True
+            def async_cancel_delayed_refresh(self) -> None:
+                self.delayed_refresh_cancelled = True
 
         class FakeSession:
             def __init__(self) -> None:
@@ -690,7 +690,7 @@ class IntegrationUnloadTestCase(unittest.TestCase):
         unload_ok = asyncio.run(yqt.async_unload_entry(hass, entry))
 
         self.assertTrue(unload_ok)
-        self.assertTrue(coordinator.shutdown_called)
+        self.assertTrue(coordinator.delayed_refresh_cancelled)
         self.assertFalse(session.close_called)
         self.assertNotIn(entry.entry_id, hass.data[DOMAIN])
 

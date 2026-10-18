@@ -124,7 +124,7 @@ class DndHomeAssistantTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_action_remains_registered_without_loaded_entries(self):
         from homeassistant.exceptions import HomeAssistantError
 
-        self.main.async_shutdown = MagicMock()
+        self.main.async_cancel_delayed_refresh = MagicMock()
         self.hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
         self.assertTrue(await async_unload_entry(self.hass, self.entry))
         self.assertTrue(self.hass.services.has_service(DOMAIN, SERVICE_SET_DND_SCHEDULE))

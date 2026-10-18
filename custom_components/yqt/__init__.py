@@ -73,7 +73,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         runtime = hass.data[DOMAIN].pop(entry.entry_id, None)
         if runtime is not None:
-            runtime["coordinator"].async_shutdown()
+            runtime["coordinator"].async_cancel_delayed_refresh()
     return unload_ok
 
 

@@ -25,8 +25,9 @@ Confirmed working:
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
 
-1. Add this repository to HACS as a custom repository (category `Integration`).
-2. Install `YQT Smart` and restart Home Assistant.
+1. Open **HACS** in Home Assistant and search for `YQT Smart`, or use the button above.
+2. Open `YQT Smart`, select **Download**, and confirm.
+3. Restart Home Assistant, then follow [Setup](#setup).
 
 ### Install manually
 

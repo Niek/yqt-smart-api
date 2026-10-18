@@ -57,7 +57,7 @@ class YQTDataUpdateCoordinator(DataUpdateCoordinator[dict[str, YQTWatchState]]):
         self._async_schedule_delayed_refresh()
 
     @callback
-    def async_shutdown(self) -> None:
+    def async_cancel_delayed_refresh(self) -> None:
         if self._delayed_refresh_unsub is not None:
             self._delayed_refresh_unsub()
             self._delayed_refresh_unsub = None
