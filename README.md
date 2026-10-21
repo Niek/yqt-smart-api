@@ -1,5 +1,7 @@
 # YQT Smart
 
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
+
 Unofficial Home Assistant integration and Python client for GPS kids' smartwatches that use the YQT Smart cloud. The same backend powers white-label apps such as SeTracker, SeTracker 2 and CarePro+, so watches paired with those apps should work too.
 
 Log in with the same account you use in the phone app. API details are documented in [`REVERSE_ENGINEERING.md`](REVERSE_ENGINEERING.md).
@@ -22,6 +24,8 @@ Confirmed working:
 ## Home Assistant
 
 ### Install via HACS
+
+Available in the default HACS repository list.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
 
