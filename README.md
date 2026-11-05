@@ -1,7 +1,5 @@
 # YQT Smart
 
-[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
-
 Unofficial Home Assistant integration and Python client for GPS kids' smartwatches that use the YQT Smart cloud. The same backend powers white-label apps such as SeTracker, SeTracker 2 and CarePro+, so watches paired with those apps should work too.
 
 Log in with the same account you use in the phone app. API details are documented in [`REVERSE_ENGINEERING.md`](REVERSE_ENGINEERING.md).
@@ -27,19 +25,27 @@ Confirmed working:
 
 ## Home Assistant
 
-### Install via HACS
+### Install via Marketplace
 
-Available in the default HACS repository list.
+Available in the [Home Assistant Marketplace](https://www.home-assistant.io/integrations/marketplace/) catalog. Marketplace is built into Home Assistant 2026.11 and later and replaces HACS.
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
+[![Open your Home Assistant instance and open YQT Smart in Marketplace.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Niek&repository=yqt-smart-api&category=integration)
 
-1. Open **HACS** in Home Assistant and search for `YQT Smart`, or use the button above.
-2. Open `YQT Smart`, select **Download**, and confirm.
-3. Restart Home Assistant, then follow [Setup](#setup).
+1. Click the button above, or go to **Settings → Marketplace** and search for **YQT Smart**.
+2. Open the repository, select **Install**, and confirm the installation.
+3. Restart Home Assistant if prompted, then follow [Setup](#setup).
+
+Existing HACS installations migrate to Marketplace automatically when Home Assistant starts after the upgrade. There is no need to reinstall this integration.
+
+On Home Assistant versions before 2026.11, use HACS: search for **YQT Smart**, select **Download**, and restart Home Assistant. The button above also works with HACS.
 
 ### Install manually
 
 Copy `custom_components/yqt` into your Home Assistant `custom_components` directory and restart.
+
+### Updates
+
+Marketplace updates appear under **Settings → Updates**. Install the update there, then restart Home Assistant to apply it.
 
 ### Setup
 
