@@ -114,3 +114,4 @@ jobs:
           name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           files: yqt.zip
+          fail_on_unmatched_files: true
