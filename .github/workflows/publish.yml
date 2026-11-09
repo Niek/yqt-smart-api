@@ -95,6 +95,16 @@ jobs:
           commit_message: "chore: bump manifest version to ${{ steps.version.outputs.tag }}"
           file_pattern: ${{ env.MANIFEST }}
 
+      - name: Build release zip
+        if: steps.version.outputs.create == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -f "$GITHUB_WORKSPACE/yqt.zip"
+          cd custom_components/yqt
+          zip -r "$GITHUB_WORKSPACE/yqt.zip" . -x '*__pycache__*' '*.pyc'
+
       - name: Create GitHub release
         if: steps.version.outputs.create == 'true'
         uses: softprops/action-gh-release@v3
@@ -103,3 +113,4 @@ jobs:
           target_commitish: ${{ steps.manifest_commit.outputs.commit_hash || github.sha }}
           name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
+          files: yqt.zip
