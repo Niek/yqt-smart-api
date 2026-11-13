@@ -45,9 +45,9 @@ The APK also contains Shenzhen fallback values:
 - `mqtts://sz.myaqsh.com:8883`
 - `https://sz.myaqsh.com:18000`
 
-The client currently uses only the primary API. The purpose and transport
-requirements of the collection, bind, and extra endpoints have not been
-validated.
+The client currently uses only the primary API. The bind service is used for
+[MQTT receiver registration](#mqtt-notifications). The collection and extra
+endpoints have not been validated.
 
 ### TLS client identity
 
@@ -339,6 +339,50 @@ selection and encrypted transport behavior have not been revalidated.
 The app sends `play_status=1` to start sound and `0` to stop, automatically
 stopping after 60 seconds. Nearby-photo requests can return status `3`, “empty”.
 
+## MQTT notifications
+
+YQT SMART `1.1.5` uses `mqtts://<region>.myaqsh.com:8883` for app
+notifications. Europe accepts MQTT 3.1.1 over verified TLS without a client
+certificate or MQTT username/password. Connection, private-topic subscription
+at QoS 0, and push registration have been verified; event delivery and payload
+decryption still need a controlled watch-event test.
+
+### Receiver registration
+
+`POST https://<region>.myaqsh.com:11003/push/msg/bindUser` uses mTLS and the
+YQT AES envelope. Its inner form values are percent-encoded, with no request
+signature. Fields are:
+
+```text
+userId=<loginname>, userNick=<loginname>, appId=aaagg11145, pushType=mqtt,
+platform=1, softToken=<token>, deviceToken=<token>, imei=<phone identifier>,
+push_open=1
+```
+
+The private topic is `push/<token>`. The APK derives the token as lowercase
+MD5 of the concatenated phone MAC, IMEI (or Android ID), CPU serial, app ID,
+and login name. The registration maps this phone-specific token to the account.
+`old_imei` is optional and refers to a previous phone identifier; a separate
+receiver must not reuse the phone app's identifiers. The endpoint acknowledges
+registration and `push_open=0` with `ok`; deletion of a registration is unverified.
+
+The APK uses a clean MQTT session. Its client ID is `394` followed by a
+substitution-encoded Android ID, truncated to 22 characters. A standalone
+receiver can use a separate random Android ID and subscribe to its private topic.
+
+### Payload and location limits
+
+The APK decodes an optional AES `encryptIndex`/`encryptData` envelope, then
+hex-decodes and RC4-decrypts the inner string using the app ID as the key.
+The resulting JSON contains `messageList`; each message's `body` is another
+JSON string containing an event `type` and usually a `did`.
+
+Static handlers include chat (`2`), administrator requests/approvals (`11`/`12`),
+and remote-photo notifications (`36`). The inspected notification model has
+no position coordinates, and the map separately calls `v2_findLastPosition`.
+No location-update event has been established. MQTT may support event-triggered
+refreshes, but it is not yet a verified replacement for position polling.
+
 ## Implementation status
 
 The shared implementation is under
@@ -359,10 +403,10 @@ See [README.md](README.md) for Home Assistant features and installation.
 - Revalidate all legacy-live feature endpoints on the current encrypted
   transport.
 - Determine whether multipart operations use a separate encryption rule.
-- Extract the MQTT topic and authentication layout before attempting push
-  updates.
-- Confirm the purpose and security requirements of the collection, bind, and
-  extra regional endpoints.
+- Verify MQTT event delivery, payload decryption, and whether any event signals
+  a new position before reducing polling.
+- Confirm the collection and extra regional endpoints; the bind endpoint used
+  for MQTT registration is described above.
 - Track server-provided `SignFlag` behavior if `KHDIW` stops working.
 - Replace the bundled client identity if the vendor rotates it or before it
   expires on 2029-05-18.
