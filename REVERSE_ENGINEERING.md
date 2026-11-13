@@ -1,24 +1,24 @@
-# YQT SMART Reverse Engineering Notes
+# YQT SMART protocol reference
 
-This document records protocol behavior observed in the YQT SMART Android app
-and through limited live API testing. It distinguishes static APK findings from
-live validation because vendor behavior can change without notice.
+Based on YQT SMART `1.1.5` (version code 16), package
+`com.tgelec.yqtsmart`. The separate [SeTracker2 protocol](SETRACKER2_PROTOCOL.md)
+uses different signing and encryption parameters.
 
-The backend appears to be a shared OEM platform. The YQT SMART APK also
-references `KiDSnav` and `MonitorGPS`, and related apps such as SeTracker,
-SeTracker 2, and CarePro+ appear to use the same service.
+## Validation scope
 
-## Analyzed versions
+Synthetic login requests verified mTLS, request encryption, and credential-error
+response decryption on the primary API. Successful account login and the
+feature checks labeled **Legacy-live** used the older HTTPS `:8093` transport,
+without the encrypted envelope; those checks do not establish current endpoint
+behavior.
 
-| APK | Version code | Checked |
-| --- | ---: | --- |
-| `1.1.1` | 12 | 2026-04-15 |
-| `1.1.5` | 16 | 2026-07-25 |
+Endpoint evidence labels:
 
-Package name: `com.tgelec.yqtsmart`.
-
-APK `1.1.5` retains the main REST path names from `1.1.1`, but changes the
-servers and request transport.
+- **Current-live:** verified with mTLS and the encrypted envelope; login checks
+  used a synthetic account.
+- **Legacy-live:** verified on the older transport.
+- **APK:** found in the app; not necessarily tested live.
+- **Implemented:** available in the Python client; not proof of live behavior.
 
 ## Current protocol
 
@@ -73,8 +73,11 @@ The vendor may replace or revoke this identity before its stated expiry.
 The raw account password is not sent. The app computes:
 
 ```text
-password_wire = sha256(md5(password))
+password_wire = SHA256_hex(MD5_hex(password))
 ```
+
+Both hashes use lowercase hexadecimal output; the outer hash takes the ASCII
+hex digest, not raw MD5 bytes.
 
 ### Inner request and signature
 
@@ -97,10 +100,11 @@ For a signed request:
 6. Compute:
 
    ```text
-   sign = sha256(md5(md5(md5(built_string)))).lower()
+   sign = SHA256_hex(MD5_hex(MD5_hex(MD5_hex(built_string))))
    ```
 
-7. Add the resulting `sign` to the inner object.
+7. Add the resulting `sign` to the inner object. Each hash above produces a
+   lowercase hexadecimal string for the next hash.
 
 `flag=394`, used by login, and `app_flag=394`, added by the transport, are
 separate fields.
@@ -140,8 +144,7 @@ lives in
 
 Multipart endpoints are a known exception requiring further validation. The
 standalone client's multipart helper still uses the legacy signed multipart
-body over mTLS; it has not been confirmed to work after the July 2026 transport
-change.
+body over mTLS; its behavior on the current API is unverified.
 
 ### Login defaults
 
@@ -166,26 +169,6 @@ protocol/client version, not the APK package version.
 - `v2_findLastPosition`, `v2_findDeviceSwitch`, and `v2_findAlarmInfo` required
   both `did` and `did_id` during live testing.
 
-## Validation history
-
-| Date | Transport | Result |
-| --- | --- | --- |
-| 2026-04-15 | Legacy `:8093` | Fake login returned normal status `2`; a real account confirmed fresh-location `sendOrder`, Photo Wall listing, and chat reads. |
-| 2026-07-06 | Legacy `:8093` | Login required protocol `version=1.0.2`; `1.0.1` returned an old-version error. Both public and session-bound `v2_new_findUserDeviceByDid` paths returned data. |
-| 2026-07-25 | Legacy `:8093` | Login began returning status `3`: “The current app is unavailable. Please upgrade the app.” |
-| 2026-07-25 | Current `:11001` | Plain TLS failed for lack of a client certificate. mTLS with the legacy body still returned the forced-upgrade response. mTLS plus the encrypted envelope returned the normal status `2` response for a fake account. |
-
-Feature observations below that are labeled “legacy-live” were not necessarily
-retested after the current transport became mandatory.
-
-Evidence labels used below:
-
-- **Current-live:** confirmed against the mTLS and encrypted transport.
-- **Legacy-live:** confirmed before the July 2026 transport change.
-- **APK:** found through static analysis but not necessarily tested live.
-- **Implemented:** present in the Python client but not necessarily revalidated
-  live.
-
 ## Endpoint reference
 
 Unless an exception is stated, requests are signed and wrapped using the
@@ -203,15 +186,8 @@ common fields such as `language`, `timestamppp`, `sign_flag`, `app_flag`, and
 | Find one device | `GET /app/{sid}/S10APP/v2_new_findUserDeviceByDid` | `did`, `did_id` | APK, legacy-live |
 | Find one device alias | `GET /app/public/S10APP/v2_new_findUserDeviceByDid` | `did`, `did_id` | Legacy-live, used by the standalone client |
 
-Login responses commonly include:
-
-- `status`
-- `message`
-- `sid`
-- `data`, containing user rows
-- `total_did_id`
-- `total_did_config`
-- `total_did_model`
+Login responses include `status`, `message`, `sid`, user rows in `data`,
+`total_did_id`, `total_did_config`, and `total_did_model`.
 
 `v2_findDeviceListByUserId` also returns `didstr` and `didrole`. These values
 help map a watch `did` to the `did_id` required by several device APIs.
@@ -256,28 +232,24 @@ The write endpoint has no `/app/{sid}` prefix. Both use the existing signed,
 encrypted transport. Settings reads also return phone numbers; HA retains
 only parsed DND periods. The CLI exposes the full response for inspection.
 
-- `DeviceParseUtils` (`com.tgelec.aqsh.utils.l`) reads underscore-separated
-  `KEY:value` configuration pairs. `DndActivity1.B8` selects this flow only
-  for `DC == 2`; unknown and older watches are excluded.
-- `DndActivity1.D8` sends `HH:mm-HH:mm-xxxxxxx` periods with Sunday-first
-  weekday bits (`0111110` = Monday-Friday), independently of the enabled
-  (`2`) or disabled (`1`) flags. `DndChooseDateActivity.E8` requires start
-  before end and at least one weekday; overnight windows are rejected.
-- `SettingResponse` declares `data` as a list of settings objects.
-  `DndActivity1.F8` checks the empty sentinel `00:00-00:00-0000000` before
-  the flag and treats only `2` as enabled. HA omits empty and switched-off
-  slots; incomplete responses and malformed enabled slots remain unknown.
-- Retrofit `f7.a.L0` and `DndAction.K3` declare the root POST; its callback
-  accepts `status=1`. The client also sends `sid`, as in the contributor's
-  implementation (the APK's declared fields do not require it).
+The APK selects this four-slot flow for watches with configuration `DC:2`.
+Its settings and UI rules are:
+
+- Periods use `HH:mm-HH:mm-xxxxxxx`, with Sunday-first weekday bits
+  (`0111110` = Monday–Friday). Start must precede end and at least one day must
+  be selected; overnight windows are rejected.
+- Flags are `2` for enabled and `1` for disabled. The empty sentinel
+  `00:00-00:00-0000000` takes precedence over the flag.
+- `data` is a list of settings objects. The write callback accepts `status=1`.
 
 Writes replace all four slots, padding unused slots with the empty sentinel
-and flag `1`. An empty list clears the schedule. HA refreshes after success;
-multi-watch updates are sequential and may partially succeed.
+and flag `1`. An empty list clears the schedule. The client includes `sid` in
+the write body, although the APK's declared fields do not require it.
 
-[Issue #13](https://github.com/Niek/yqt-smart-api/issues/13) records the older
-watch flow, other settings and the contributor's app/sensor readback report.
-Watch enforcement has not been independently verified.
+HA omits empty and disabled slots, treats incomplete or malformed enabled
+slots as unknown, and refreshes after a successful write. Multi-watch updates
+are sequential and may partially succeed. Watch enforcement has not been
+independently verified.
 
 ## Commands and feature endpoints
 
@@ -306,15 +278,11 @@ usual `status=1` response shape.
 | Time sync | `test?dev_id=<did>&com=D280&param1=<tz_value>&param2=<urlencoded time>` | APK |
 
 Fresh location is asynchronous: the app sends `D3`, then polls
-`v2_findLastPosition`. A legacy-live acknowledgement looked like:
-
-```json
-{"dev_id":"...","com":"D3","code":200,"current_utc_time":"..."}
-```
+`v2_findLastPosition`. An acknowledgement does not establish a new location fix.
 
 For time sync, `param1` is an app-computed offset-like value that accounts for
 DST, not a raw IANA timezone name. `param2` uses `yyyy-MM-dd HH:mm:ss` before
-URL encoding. An older `D57` builder also exists, but APK `1.1.5` uses `D280`.
+URL encoding.
 
 Live video monitoring uses additional media/session handling not covered by
 the REST command itself. Some `D196` variants append `param4=2`.
@@ -330,19 +298,13 @@ the REST command itself. Some `D196` variants append `param4=2`.
 | Download attachment | `GET /app/{sid}/S10APP/v2_get_file` | `did_id`, `did`, `dev_id`, `filename`, `type` | APK |
 | Direct file download | `GET /app/{sid}/S10APP/v2_file_download` | Stored path and signed fields | APK |
 
-Legacy-live chat observations:
+Chat rows contain `id`, `device_info_id`, `file_type`, `path`, and
+`create_time`. Legacy reads returned inbound AMR voice messages; newly sent
+app-to-watch text was absent from subsequent reads. Full conversation history
+and paging behavior are unverified.
 
-- `findTalkNewInfo` returned rows containing fields such as `id`,
-  `device_info_id`, `file_type`, `path`, and `create_time`.
-- The tested rows were inbound AMR voice messages.
-- Clearing app storage and logging in again returned the same three rows, so
-  the endpoint did not behave like a complete historical paging API.
-- A newly sent app-to-watch text did not appear in a follow-up read, suggesting
-  `findTalkNewInfo` is primarily for inbound watch messages.
-- Text sending worked with `file_type=3`, `flag=1`, and `message=<text>`.
-
-The current `chat-send` CLI still uses the legacy multipart encoding. Treat it
-as unverified until multipart behavior is tested against APK `1.1.5`.
+Text sending uses `file_type=3`, `flag=1`, and `message=<text>`. The CLI's
+`chat-send` uses legacy multipart encoding, unverified on the current API.
 
 ### Photo Wall
 
@@ -353,7 +315,7 @@ as unverified until multipart behavior is tested against APK `1.1.5`.
 
 Legacy-live results contained `id`, `type`, `path`, and `createtime`.
 `v2_downloadPictrueDoor` required the basename, such as
-`2026-04-14-16-49-33.jpg`; sending the full stored path returned HTTP 404.
+`photo.jpg`; sending the full stored path returned HTTP 404.
 
 Still-photo commands `D75` and `D134` trigger capture. The app then refreshes
 the Photo Wall list.
@@ -371,15 +333,11 @@ selection and encrypted transport behavior have not been revalidated.
 
 | Action | Endpoint-specific fields | Evidence |
 | --- | --- | --- |
-| Play sound | `a=playvoice`, `play_status=1` or `0`, `did`, `did_id` | APK; legacy calls timed out |
+| Play sound | `a=playvoice`, `play_status=1` or `0`, `did`, `did_id` | APK; live operation unverified |
 | Nearby photos | `a=photo`, `did`, `did_id` | APK; legacy-live empty response |
 
-The sound dialog sends `play_status=1`, sends `0` when stopped, and
-automatically sends `0` after 60 seconds. Both start and stop timed out during
-the legacy probe, possibly because the server waits for a device-side flow.
-
-The nearby-photo probe returned status `3`, “empty”, when no photos were
-available.
+The app sends `play_status=1` to start sound and `0` to stop, automatically
+stopping after 60 seconds. Nearby-photo requests can return status `3`, “empty”.
 
 ## Implementation status
 
@@ -389,28 +347,12 @@ CLI is [`yqt_client.py`](yqt_client.py).
 
 | Coverage | Commands/features |
 | --- | --- |
-| Implemented with the current standard encrypted transport | `login`, `devices`, `device-list-meta`, `send-order`, `fresh-position`, `last-position`, `last-positions`, `alarms`, `switches`, `photowall-list`, `photowall-download`, `chat-read` |
+| Implemented with the current standard encrypted transport | `login`, `devices`, `device-list-meta`, `send-order`, `fresh-position`, `last-position`, `last-positions`, `alarms`, `switches`, `find-settings`, `set-dnd`, `photowall-list`, `photowall-download`, `chat-read` |
 | Implemented through legacy multipart; current behavior unverified | `chat-send` |
 | Available through raw `send-order` | Restart and camera/time-sync commands once their parameters are known |
 | Not implemented as dedicated helpers | Audio/photo chat upload, attachment download, sound playback, camera/video helpers, restart, time sync, nearby photos |
 
-The Home Assistant integration is already implemented under
-[`custom_components/yqt`](custom_components/yqt). It polls device metadata and
-last position, and exposes:
-
-- one device per watch
-- a last-position `device_tracker`
-- battery, last-fix, and speed sensors
-- disabled-by-default Wi-Fi and cell-tower diagnostic sensors
-- a stale-location binary sensor
-- a button that sends `D3` and schedules a later refresh
-- a Do Not Disturb schedule sensor for `DC == 2` watches, polled independently
-  every 30 minutes, exposing only parsed periods
-- a `yqt.set_dnd_schedule` action for full-schedule replacement, followed by
-  settings refresh; expired-session responses are retried once after login
-
-Installation and user-facing feature documentation belongs in
-[`README.md`](README.md), rather than this protocol reference.
+See [README.md](README.md) for Home Assistant features and installation.
 
 ## Known gaps and maintenance risks
 
@@ -426,18 +368,3 @@ Installation and user-facing feature documentation belongs in
   expires on 2029-05-18.
 - Treat endpoint, key, certificate, and APK-version values as vendor-controlled
   implementation details that may change without notice.
-
-## Legacy transport summary
-
-APK `1.1.1` used public REST servers centered on:
-
-- primary API `https://<region>.myaqsh.com:8093`
-- collection service `:8082`
-- bind service `:8083` or `:8084`
-- unencrypted MQTT on port `1883`
-- Shenzhen upload fallback on port `10000`
-
-The old primary API accepted directly signed query/form parameters without
-mTLS or the encrypted envelope. On 2026-07-25 it began rejecting that client
-generation with the forced-upgrade status, so these values are retained only
-as historical context.

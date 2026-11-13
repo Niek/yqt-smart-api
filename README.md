@@ -4,6 +4,9 @@ Unofficial Home Assistant integration and Python client for GPS kids' smartwatch
 
 Log in with the same account you use in the phone app. API details are documented in [`REVERSE_ENGINEERING.md`](REVERSE_ENGINEERING.md).
 
+The [SeTracker2 protocol](SETRACKER2_PROTOCOL.md) is documented separately,
+with a diagnostic probe. It is not supported by the integration or client.
+
 ## Compatible watches
 
 Confirmed working:
