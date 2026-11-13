@@ -8,5 +8,8 @@ unpacked/
 __pycache__/
 *.pyc
 
+# Local credentials
+.env
+
 # macOS
 .DS_Store

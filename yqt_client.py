@@ -9,8 +9,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
+import time
+from dataclasses import replace
+from functools import reduce
+from operator import xor
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.padding import PKCS7
 
 from custom_components.yqt.core.protocol import (
     DEFAULT_LANGUAGE,
@@ -24,6 +35,97 @@ from custom_components.yqt.core.protocol import (
 from custom_components.yqt.core.sync_client import YQTClient
 
 
+class SeTracker2Client(YQTClient):
+    """Experimental SeTracker2 transport for the standalone client."""
+
+    SIGN_KEY = "JKLDfjiow48fjklsSSDFASDFQPXJKLDKFJ34kfjsdoifjw"
+    SIGN_FLAG = "aKsdj93kf93jfcdkjaoskjfLAKlWKEJF92lsdLFKkfjsdlfkj"
+    ENVELOPE_KEY = bytes.fromhex("d95337bb49ea14f4d47bcd36f777c07e")
+    ENVELOPE_IV = bytes.fromhex("0dd9444f8132b092373afd8c74629fed")
+    CREDENTIAL_KEY = bytes.fromhex("87fe6ba20a09adc5ef5183ac26cf509b")
+    CREDENTIAL_IV = bytes.fromhex("125648f3f4f79c928d6fd7145ca6100a")
+
+    def __init__(
+        self,
+        *,
+        region: str = "europe",
+        language: str = DEFAULT_LANGUAGE,
+        session_id: str | None = None,
+        timeout: float = 20.0,
+    ) -> None:
+        super().__init__(
+            region=region, language=language, session_id=session_id,
+            timeout=timeout, app_id="aaagg10006", client_flag=70, client_version="3.3.5",
+        )
+        self.region = replace(self.region, base_url=f"https://{region}.myaqsh.com:9401")
+
+    @staticmethod
+    def _aes_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
+        padder = PKCS7(128).padder()
+        padded = padder.update(data) + padder.finalize()
+        encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+        return encryptor.update(padded) + encryptor.finalize()
+
+    def _password_params(self, loginname: str, password: str) -> dict[str, str]:
+        # Non-ASCII JNI Modified UTF-8 credentials have not been validated.
+        if not loginname.isascii() or not password.isascii() or "\0" in loginname + password:
+            raise YQTError("SeTracker2 login supports ASCII account names and passwords without NUL only")
+        combined = self._aes_encrypt(loginname.encode(), self.CREDENTIAL_KEY, self.CREDENTIAL_IV)
+        combined += hashlib.md5(password.encode()).digest()
+        return super()._password_params(loginname, password) | {
+            "newpassword": hashlib.sha256(combined).hexdigest().upper() + f"{reduce(xor, combined):02X}",
+        }
+
+    @classmethod
+    def _sign(cls, params: dict[str, str]) -> str:
+        excluded = {"sign", "sign_flag", "encrypted_aes_key", "encrypted_aes_iv"}
+        canonical = "&".join(
+            key + "=" + quote(value, safe="-_.!~*'()")
+            for key, value in sorted(params.items()) if key not in excluded
+        )
+        return hmac.new(
+            cls.SIGN_KEY.encode(), (canonical + "&key=" + cls.SIGN_KEY).encode(), hashlib.sha256,
+        ).hexdigest().upper()
+
+    def _signed_params(self, params: dict[str, Any]) -> dict[str, str]:
+        normalized = {
+            key: str(value) for key, value in params.items() if value is not None and key != "sign"
+        }
+        normalized.setdefault("timestamppp", str(int(time.time() * 1000)))
+        normalized["app_flag"] = str(self.client_flag)
+        normalized["sign_flag"] = self.SIGN_FLAG
+        normalized["sign"] = self._sign(normalized)
+        return normalized
+
+    def _encrypt_request(self, params: dict[str, str], *, form_encoded: bool) -> tuple[dict[str, Any], int]:
+        # Both GET and POST preserve raw inner values; only signing URL-encodes them.
+        signed = self._signed_params(params)
+        ciphertext = self._aes_encrypt(
+            json.dumps(signed, ensure_ascii=False, separators=(",", ":")).encode(),
+            self.ENVELOPE_KEY, self.ENVELOPE_IV,
+        )
+        return {"encryptIndex": 22, "encryptData": ciphertext.hex().upper()}, 22
+
+    def _decrypt_response(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if "encryptData" not in payload:
+            return payload
+        try:
+            if int(payload["encryptIndex"]) != 22:
+                raise ValueError("unexpected encryption index")
+            decryptor = Cipher(algorithms.AES(self.ENVELOPE_KEY), modes.CBC(self.ENVELOPE_IV)).decryptor()
+            padded = decryptor.update(bytes.fromhex(payload["encryptData"])) + decryptor.finalize()
+            unpadder = PKCS7(128).unpadder()
+            result = json.loads(unpadder.update(padded) + unpadder.finalize())
+            if not isinstance(result, dict):
+                raise ValueError("non-object response")
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
+            raise YQTError("server returned an invalid SeTracker2 encrypted response") from exc
+        return result
+
+    def _request_json_multipart(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise YQTError("SeTracker2 multipart chat sending is not supported")
+
+
 def _dnd_period(value: str) -> DndPeriod:
     try:
         return DndPeriod.parse(value)
@@ -32,7 +134,11 @@ def _dnd_period(value: str) -> DndPeriod:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Probe the YQT SMART HTTP API.")
+    parser = argparse.ArgumentParser(description="Access the YQT SMART or SeTracker2 HTTP API.")
+    parser.add_argument(
+        "--protocol", choices=("yqt", "setracker2"), default="yqt",
+        help="API protocol (default: yqt; setracker2 is experimental)",
+    )
     parser.add_argument("--region", default="europe", choices=sorted(REGIONS))
     parser.add_argument("--language", default=DEFAULT_LANGUAGE)
     parser.add_argument(
@@ -169,7 +275,10 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    client = YQTClient(region=args.region, language=args.language, session_id=args.sid)
+    if args.protocol == "setracker2" and args.command == "chat-send":
+        parser.error("SeTracker2 multipart chat sending is not supported")
+    client_type = SeTracker2Client if args.protocol == "setracker2" else YQTClient
+    client = client_type(region=args.region, language=args.language, session_id=args.sid)
 
     if args.command == "login":
         loginname, password = _require_login_fields(args)

@@ -1,11 +1,10 @@
 # SeTracker2 protocol
 
 This reference covers the HMAC authentication and index-22 encryption variant
-of SeTracker2. Synthetic login requests to Europe `:9401` verified signature
-validation, request encryption, and credential-error response decryption.
-Successful account login, sessions, and device operations remain unverified.
-The diagnostic probe is separate from the YQT client and Home Assistant
-integration; neither implements this variant.
+of SeTracker2, implemented in [`yqt_client.py`](yqt_client.py) through
+`--protocol setracker2`. Account login, session reuse, device metadata/listing,
+and last-position reads have been verified on Europe `:9401`. Home Assistant
+continues to use the YQT protocol.
 
 ## App and transport
 
@@ -69,13 +68,12 @@ POST the envelope as JSON with `X-Encrypt-Index: 22`:
 {"encryptIndex":22,"encryptData":"<uppercase hexadecimal ciphertext>"}
 ```
 
-GET uses the envelope fields as query parameters; GET behavior has not been
-independently validated. Wire index 22 corresponds to native AES index 21.
+GET uses the envelope fields as query parameters. Wire index 22 corresponds to native AES index 21.
 Unlike the [YQT POST transport](REVERSE_ENGINEERING.md#encrypted-envelope),
 this variant does not percent-encode inner values after signing.
 
-Credential-error responses use the same encryption envelope. Signature and
-decryption errors return plain JSON.
+Successful and credential-error JSON responses use the same encryption
+envelope. Signature and decryption errors return plain JSON.
 
 ## Login
 
@@ -103,19 +101,17 @@ CRED_IV  = 125648f3f4f79c928d6fd7145ca6100a
 ```
 
 Credential keys are also hex-encoded binary values. Native strings use JNI
-Modified UTF-8; the probe supports ASCII inputs only. Whether the server
-requires or validates `newpassword` is unverified.
+Modified UTF-8; the client accepts ASCII credentials without NUL only. Whether
+the server requires or validates `newpassword` is unverified.
 
 ## Verification
 
-[`tools/probe_setracker2.py`](tools/probe_setracker2.py) checks HMAC, credential,
-AES reference vectors, and signing exclusions offline. `--live` sends eight
-synthetic login requests to Europe using a fixed `example.invalid` account.
-It accepts no real credentials and sends no device commands.
+[`tests/test_setracker2.py`](tests/test_setracker2.py) checks native crypto
+vectors, signing exclusions, request/response handling, and YQT defaults.
 
 ```bash
-uv run --script tools/probe_setracker2.py
-uv run --script tools/probe_setracker2.py --live
+uv run --with cryptography python -m unittest discover -s tests -p test_setracker2.py
+./yqt_client.py --protocol setracker2 --region europe --account YOUR_EMAIL --password YOUR_PASSWORD login
 ```
 
 Observed live results:
@@ -128,9 +124,10 @@ Observed live results:
 | YQT signature without its flag, or invalid YQT signature | Plain `status=-3`, `sign error` |
 | Invalid ciphertext | Plain `status=-5`, `Request decryption failed.` |
 
-These results establish signature and encryption behavior, not successful
-account authentication. A client profile still needs account login, session,
-device metadata, and last-position validation; commands need separate checks.
+Account checks also verified login (`status=1`), encrypted GET responses,
+session-bound requests, device discovery through the metadata fallback, and
+last-position results including empty responses. Multipart chat sending is
+unsupported; other commands and regions need separate validation.
 
 Additional endpoint details remain unverified: a public `v2_findAlarmInfo`
 alias, `ry_findDidRoomCountInfo` device counters, and per-query `type` values.

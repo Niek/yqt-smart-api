@@ -4,9 +4,6 @@ Unofficial Home Assistant integration and Python client for GPS kids' smartwatch
 
 Log in with the same account you use in the phone app. API details are documented in [`REVERSE_ENGINEERING.md`](REVERSE_ENGINEERING.md).
 
-The [SeTracker2 protocol](SETRACKER2_PROTOCOL.md) is documented separately,
-with a diagnostic probe. It is not supported by the integration or client.
-
 ## Compatible watches
 
 Confirmed working:
@@ -99,6 +96,8 @@ With [uv](https://docs.astral.sh/uv/) installed:
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD find-settings --did YOUR_DEVICE_ID
 ./yqt_client.py --region europe --account YOUR_EMAIL --password YOUR_PASSWORD set-dnd --did YOUR_DEVICE_ID --period 08:00-15:00:mon,tue,wed,thu,fri
 ```
+
+You can also use `--protocol setracker2` for the [SeTracker2 protocol](SETRACKER2_PROTOCOL.md).
 
 Run `./yqt_client.py --help` for all commands. The CLI and integration share the same code in `custom_components/yqt/core/`.
 

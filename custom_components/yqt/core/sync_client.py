@@ -83,7 +83,7 @@ class YQTClient:
             {
                 "language": self.language,
                 "appid": self.app_id,
-                "password": hash_password(password),
+                **self._password_params(loginname, password),
                 "loginname": loginname,
                 "flag": self.client_flag,
                 "version": self.client_version,
@@ -540,44 +540,41 @@ class YQTClient:
             raise YQTError("session_id is required; call login() first or pass sid= explicitly")
         return f"/app/{session}{suffix}"
 
+    def _password_params(self, loginname: str, password: str) -> dict[str, str]:
+        return {"password": hash_password(password)}
+
+    def _encrypt_request(self, params: dict[str, str], *, form_encoded: bool) -> tuple[dict[str, Any], int]:
+        return encrypt_request(params, form_encoded=form_encoded)
+
+    def _decrypt_response(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return decrypt_response(payload)
+
     def _signed_params(self, params: dict[str, Any]) -> dict[str, str]:
-        normalized: dict[str, str] = {}
-        for key, value in params.items():
-            if value is None:
-                continue
-            if value == "":
-                normalized[key] = ""
-                continue
-            normalized[key] = str(value)
+        normalized = {key: str(value) for key, value in params.items() if value is not None}
 
         normalized.setdefault("timestamppp", str(int(time.time() * 1000)))
         normalized.setdefault("sign_flag", DEFAULT_SIGN_FLAG)
         normalized["sign"] = compute_sign(normalized)
         return normalized
 
-    def _request_json(self, method: str, path: str, params: dict[str, str]) -> dict[str, Any]:
+    def _build_request(
+        self, method: str, path: str, params: dict[str, str], *, accept: str,
+    ) -> urllib.request.Request:
         url = urllib.parse.urljoin(f"{self.region.base_url}/", path.lstrip("/"))
-        encrypted, index = encrypt_request(params, form_encoded=method == "POST")
-        headers = {
-            "Accept": "application/json",
-            ENCRYPT_INDEX_HEADER: str(index),
-        }
+        encrypted, index = self._encrypt_request(params, form_encoded=method == "POST")
+        headers = {"Accept": accept, ENCRYPT_INDEX_HEADER: str(index)}
 
         if method == "GET":
-            query = urllib.parse.urlencode(
-                {
-                    "encryptData": encrypted["encryptData"],
-                    "encryptIndex": encrypted["encryptIndex"],
-                }
-            )
-            request = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
-        elif method == "POST":
+            query = urllib.parse.urlencode(encrypted)
+            return urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
+        if method == "POST":
             body = json.dumps(encrypted, separators=(",", ":")).encode()
             headers["Content-Type"] = "application/json; charset=utf-8"
-            request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        else:
-            raise ValueError(f"unsupported method {method!r}")
+            return urllib.request.Request(url, data=body, headers=headers, method="POST")
+        raise ValueError(f"unsupported method {method!r}")
 
+    def _request_json(self, method: str, path: str, params: dict[str, str]) -> dict[str, Any]:
+        request = self._build_request(method, path, params, accept="application/json")
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8", "replace")
@@ -591,7 +588,7 @@ class YQTClient:
             raise YQTError(f"server did not return JSON: {raw[:500]}") from exc
         if not isinstance(payload, dict):
             raise YQTError("server returned a non-object JSON payload")
-        return decrypt_response(payload)
+        return self._decrypt_response(payload)
 
     def _request_json_multipart(
         self,
@@ -651,28 +648,7 @@ class YQTClient:
             raise YQTError(f"server did not return JSON: {raw[:500]}") from exc
 
     def _request_bytes(self, method: str, path: str, params: dict[str, str], *, accept: str = "*/*") -> bytes:
-        url = urllib.parse.urljoin(f"{self.region.base_url}/", path.lstrip("/"))
-        encrypted, index = encrypt_request(params, form_encoded=method == "POST")
-        headers = {
-            "Accept": accept,
-            ENCRYPT_INDEX_HEADER: str(index),
-        }
-
-        if method == "GET":
-            query = urllib.parse.urlencode(
-                {
-                    "encryptData": encrypted["encryptData"],
-                    "encryptIndex": encrypted["encryptIndex"],
-                }
-            )
-            request = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
-        elif method == "POST":
-            body = json.dumps(encrypted, separators=(",", ":")).encode()
-            headers["Content-Type"] = "application/json; charset=utf-8"
-            request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        else:
-            raise ValueError(f"unsupported method {method!r}")
-
+        request = self._build_request(method, path, params, accept=accept)
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
                 raw = response.read()
@@ -687,7 +663,7 @@ class YQTClient:
             except json.JSONDecodeError:
                 return raw
             if isinstance(payload, dict):
-                payload = decrypt_response(payload)
+                payload = self._decrypt_response(payload)
                 status = payload.get("status")
                 code = payload.get("code")
                 message = str(payload.get("message", payload.get("msg", "unexpected JSON response")))
