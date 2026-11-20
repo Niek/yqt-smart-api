@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
+
 import custom_components.yqt as yqt
 from custom_components.yqt.const import DOMAIN
 from custom_components.yqt.core.async_client import YQTApiClient
@@ -15,6 +17,7 @@ from custom_components.yqt.core.protocol import (
     DISABLED_DND_PERIOD,
     REGIONS,
     DndPeriod,
+    YQTConnectionError,
     YQTError,
     extract_dnd_periods,
     dnd_schedule_fields,
@@ -529,6 +532,42 @@ class TransportTestCase(unittest.TestCase):
 
 
 class AsyncClientTransportTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_login_retries_connection_timeouts(self) -> None:
+        for connects in (True, False):
+            with self.subTest(connects=connects):
+                session = MagicMock()
+                response = MagicMock(status=200)
+                response.text = AsyncMock(return_value='{"status":1,"sid":"test-session"}')
+                failures = [aiohttp.ConnectionTimeoutError("connect timed out") for _ in range(3)]
+                session.request.return_value.__aenter__.side_effect = [
+                    *failures[:2], response if connects else failures[2],
+                ]
+                client = YQTApiClient(session, region="russ", loginname="demo@example.com", password="test")
+
+                if connects:
+                    await client.async_login()
+                    self.assertEqual(client.session_id, "test-session")
+                else:
+                    with self.assertRaises(YQTConnectionError) as error:
+                        await client.async_login()
+                    self.assertIs(error.exception.__cause__, failures[2])
+
+                self.assertEqual(session.request.call_count, 3)
+                self.assertEqual(session.request.call_args_list, [session.request.call_args] * 3)
+                self.assertEqual(session.request.call_args.kwargs["timeout"].sock_connect, 5)
+
+    async def test_login_does_not_retry_response_timeout(self) -> None:
+        session = MagicMock()
+        response = session.request.return_value.__aenter__.return_value
+        response.text = AsyncMock(side_effect=aiohttp.SocketTimeoutError("read timed out"))
+        client = YQTApiClient(session, region="russ", loginname="demo@example.com", password="test")
+
+        with self.assertRaises(YQTConnectionError) as error:
+            await client.async_login()
+
+        self.assertIsInstance(error.exception.__cause__, aiohttp.SocketTimeoutError)
+        session.request.assert_called_once()
+
     def test_command_status_601_is_described_as_offline(self) -> None:
         for client in (YQTApiClient, YQTClient):
             for key in ("code", "status"):

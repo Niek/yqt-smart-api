@@ -44,6 +44,11 @@ from .transport import (
 )
 
 
+# YQT SMART 1.1.5 uses a five-second connection timeout for login.
+LOGIN_CONNECT_TIMEOUT = 5
+LOGIN_CONNECT_ATTEMPTS = 3
+
+
 class YQTApiClient:
     def __init__(
         self,
@@ -138,7 +143,9 @@ class YQTApiClient:
                 "isIPHONE": DEFAULT_IS_IPHONE,
             }
         )
-        response = await self._request_json("POST", "/app/public/S10APP/v2_new_userLogin2", data=payload)
+        response = await self._request_json(
+            "POST", "/app/public/S10APP/v2_new_userLogin2", data=payload, retry_connect=True,
+        )
         self._ensure_login_success(response)
 
         sid = response.get("sid")
@@ -337,6 +344,7 @@ class YQTApiClient:
         *,
         params: dict[str, str] | None = None,
         data: dict[str, str] | None = None,
+        retry_connect: bool = False,
     ) -> dict[str, Any]:
         url = urljoin(f"{self.region.base_url}/", path.lstrip("/"))
         if self.ssl_context is None:
@@ -358,21 +366,37 @@ class YQTApiClient:
         else:
             request_data = json.dumps(encrypted, separators=(",", ":"))
 
+        timeout = self.request_timeout
+        attempts = 1
+        deadline = None
+        if retry_connect:
+            timeout = aiohttp.ClientTimeout(total=self.request_timeout, sock_connect=LOGIN_CONNECT_TIMEOUT)
+            attempts = LOGIN_CONNECT_ATTEMPTS
+            deadline = self.request_timeout if self.request_timeout > 0 else None
+
         try:
-            async with self.session.request(
-                method,
-                url,
-                params=request_params,
-                data=request_data,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json; charset=utf-8",
-                    ENCRYPT_INDEX_HEADER: str(index),
-                },
-                timeout=self.request_timeout,
-                ssl=self.ssl_context,
-            ) as response:
-                raw = await response.text()
+            async with asyncio.timeout(deadline):
+                for attempt in range(attempts):
+                    try:
+                        async with self.session.request(
+                            method,
+                            url,
+                            params=request_params,
+                            data=request_data,
+                            headers={
+                                "Accept": "application/json",
+                                "Content-Type": "application/json; charset=utf-8",
+                                ENCRYPT_INDEX_HEADER: str(index),
+                            },
+                            timeout=timeout,
+                            ssl=self.ssl_context,
+                            allow_redirects=not retry_connect,
+                        ) as response:
+                            raw = await response.text()
+                        break
+                    except aiohttp.ConnectionTimeoutError:
+                        if attempt == attempts - 1:
+                            raise
         except (aiohttp.ClientError, TimeoutError) as exc:
             raise YQTConnectionError(f"request to {url} failed: {exc}") from exc
 
